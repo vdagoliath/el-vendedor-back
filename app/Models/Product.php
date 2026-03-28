@@ -1,0 +1,70 @@
+<?php
+
+namespace App\Models;
+
+use Database\Factories\ProductFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Product extends Model
+{
+    /** @use HasFactory<ProductFactory> */
+    use HasFactory;
+
+    use SoftDeletes;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var list<string>
+     */
+    protected $fillable = [
+        'business_id',
+        'external_id',
+        'code',
+        'title',
+        'description',
+        'type',
+        'regular_price',
+        'purchase_price',
+        'barcode_type',
+        'min_stock',
+        'category_external_id',
+        'unit_of_measurement',
+        'unit_of_measurement_purchase',
+        'stock_by_warehouse',
+        'source_created_at',
+        'source_updated_at',
+        'last_received_event_id',
+    ];
+
+    /**
+     * The attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'regular_price' => 'decimal:4',
+            'purchase_price' => 'decimal:4',
+            'min_stock' => 'decimal:4',
+            'unit_of_measurement' => 'array',
+            'unit_of_measurement_purchase' => 'array',
+            'stock_by_warehouse' => 'array',
+            'source_created_at' => 'datetime',
+            'source_updated_at' => 'datetime',
+            'deleted_at' => 'datetime',
+        ];
+    }
+
+    /**
+     * Get the business that owns the product.
+     */
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
+    }
+}
