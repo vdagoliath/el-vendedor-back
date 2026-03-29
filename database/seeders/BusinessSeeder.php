@@ -16,16 +16,17 @@ class BusinessSeeder extends Seeder
     {
         $owner = User::query()->firstOrCreate(
             ['email' => 'owner@example.com'],
-            User::factory()->make([
+            User::factory()->raw([
                 'name' => 'Demo Business Owner',
-            ])->toArray(),
+                'email' => 'owner@example.com',
+            ]),
         );
 
         $business = Business::query()->firstOrCreate(
             ['slug' => 'demo-store'],
-            Business::factory()->make([
+            Business::factory()->raw([
                 'name' => 'Demo Store',
-            ])->toArray(),
+            ]),
         );
 
         $business->users()->syncWithoutDetaching([
