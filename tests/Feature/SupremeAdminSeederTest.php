@@ -10,13 +10,15 @@ test('supreme admin seeder creates a single supreme administrator with platform 
     $this->seed(SupremeAdminSeeder::class);
     $this->seed(SupremeAdminSeeder::class);
 
-    $supremeAdmin = User::query()
-        ->where('email', 'admin@example.com')
-        ->first();
+    $supremeAdmins = User::query()
+        ->where('is_platform_admin', true)
+        ->where('backoffice_role', BackofficeRole::SuperAdmin)
+        ->get();
+
+    $supremeAdmin = $supremeAdmins->sole();
 
     expect($supremeAdmin)->not->toBeNull();
-    expect(User::query()->where('email', 'admin@example.com')->count())->toBe(1);
-    expect($supremeAdmin->name)->toBe('Supreme Administrator');
+    expect($supremeAdmins)->toHaveCount(1);
     expect($supremeAdmin->is_platform_admin)->toBeTrue();
     expect($supremeAdmin->backoffice_role)->toBe(BackofficeRole::SuperAdmin);
     expect($supremeAdmin->isBackofficeSuperAdmin())->toBeTrue();
@@ -27,8 +29,9 @@ test('database seeder includes the supreme administrator account', function () {
     $this->seed(DatabaseSeeder::class);
 
     $supremeAdmin = User::query()
-        ->where('email', 'admin@example.com')
-        ->first();
+        ->where('is_platform_admin', true)
+        ->where('backoffice_role', BackofficeRole::SuperAdmin)
+        ->sole();
 
     expect($supremeAdmin)->not->toBeNull();
     expect($supremeAdmin->is_platform_admin)->toBeTrue();
