@@ -7,6 +7,7 @@ use App\Http\Controllers\Backoffice\CurrentBusinessController;
 use App\Http\Controllers\Backoffice\CurrentBusinessEmployeeController;
 use App\Http\Controllers\Backoffice\CurrentBusinessMemberController;
 use App\Http\Controllers\Backoffice\ExpenseController;
+use App\Http\Controllers\Backoffice\LicensePricingController;
 use App\Http\Controllers\Backoffice\ProductController;
 use App\Http\Controllers\Backoffice\PurchaseController;
 use App\Http\Controllers\Backoffice\SaleController;
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice')->name('backoffice.')->group(function () {
     Route::get('businesses', [BusinessController::class, 'index'])->name('businesses.index');
     Route::post('businesses', [BusinessController::class, 'store'])->name('businesses.store');
+    Route::put('businesses/{business}', [BusinessController::class, 'update'])->name('businesses.update');
+    Route::post('businesses/{business}/sync-token', [BusinessController::class, 'issueSyncToken'])->name('businesses.sync-token');
 
     Route::put('current-business', [CurrentBusinessController::class, 'update'])->name('current-business.update');
 
@@ -22,6 +25,10 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::get('access', [BackofficeUserController::class, 'index'])->name('access.index');
         Route::post('access', [BackofficeUserController::class, 'store'])->name('access.store');
         Route::patch('access/{user}', [BackofficeUserController::class, 'update'])->name('access.update');
+        Route::put('license-pricing/config', [LicensePricingController::class, 'updateConfig'])->name('license-pricing.config.update');
+        Route::post('license-pricing/rules', [LicensePricingController::class, 'store'])->name('license-pricing.rules.store');
+        Route::put('license-pricing/rules/{licensePricingRule}', [LicensePricingController::class, 'update'])->name('license-pricing.rules.update');
+        Route::delete('license-pricing/rules/{licensePricingRule}', [LicensePricingController::class, 'destroy'])->name('license-pricing.rules.destroy');
     });
 
     Route::middleware('current.business')->group(function () {
