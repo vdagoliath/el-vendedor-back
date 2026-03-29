@@ -4,11 +4,16 @@ namespace App\Http\Controllers\Api\V1\Sync;
 
 use App\Http\Controllers\Controller;
 use App\Models\Business;
+use App\Support\Licensing\BusinessLicensePricingResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class SyncBootstrapController extends Controller
 {
+    public function __construct(
+        private readonly BusinessLicensePricingResolver $pricingResolver
+    ) {}
+
     /**
      * Return the bootstrap contract for a device entering sync.
      */
@@ -29,6 +34,8 @@ class SyncBootstrapController extends Controller
                 'phone' => $business->phone,
                 'default_currency' => $business->default_currency ?? 'CUP',
                 'license_expires_at' => $business->license_expires_at?->toIso8601String(),
+                'license_catalog' => $this->pricingResolver->catalog(),
+                'license_quote' => $this->pricingResolver->quote($business),
             ],
             'capabilities' => [
                 'push' => true,
@@ -38,6 +45,8 @@ class SyncBootstrapController extends Controller
             ],
             'supported_entities' => [
                 'business_profile',
+                'license_catalog',
+                'license_quote',
                 'products',
                 'categories',
                 'contacts',

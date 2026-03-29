@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
-import { Building2, CircleCheckBig, Plus, Store } from 'lucide-vue-next';
+import { Building2, CircleCheckBig, Copy, KeyRound, Plus, Store } from 'lucide-vue-next';
+import { ref } from 'vue';
 import BusinessController from '@/actions/App/Http/Controllers/Backoffice/BusinessController';
 import CurrentBusinessController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessController';
+import LicensePricingController from '@/actions/App/Http/Controllers/Backoffice/LicensePricingController';
 import Heading from '@/components/Heading.vue';
 import InputError from '@/components/InputError.vue';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +29,10 @@ type BusinessItem = {
     id: number;
     name: string;
     slug: string;
+    address: string | null;
+    phone: string | null;
+    default_currency: string;
+    owner_emails: string[];
     is_active: boolean;
     current_user_role: string | null;
     membership_is_active: boolean | null;
@@ -35,11 +41,78 @@ type BusinessItem = {
 
 type Props = {
     businesses: BusinessItem[];
+    currentBusiness: BusinessItem | null;
+    generatedSyncToken: {
+        token: string | null;
+        owner_email: string | null;
+        warning: string | null;
+    };
+    licensePricing: {
+        catalog: {
+            operationWindowDays: number;
+            conditions: {
+                currency: string;
+                activePosDefinition: string;
+                activeOwnerDefinition: string;
+            };
+            rules: Array<{
+                id: string;
+                name: string;
+                description: string | null;
+                currency: string;
+                monthlyPrice: number;
+                minActivePos: number;
+                maxActivePos: number | null;
+                minActiveOwners: number | null;
+                maxActiveOwners: number | null;
+            }>;
+        };
+        quote: {
+            currency: string;
+            monthlyPrice: number;
+            activePosCount: number;
+            activeOwnerCount: number;
+            operationWindowDays: number;
+            ruleLabel: string | null;
+            ruleDescription: string | null;
+        } | null;
+        config: {
+            id: number | null;
+            active_pos_operation_window_days: number;
+        };
+        rules: Array<{
+            id: number;
+            name: string;
+            description: string | null;
+            currency: string;
+            monthly_price: number;
+            min_active_pos: number;
+            max_active_pos: number | null;
+            min_active_owners: number | null;
+            max_active_owners: number | null;
+            sort_order: number;
+            is_active: boolean;
+        }>;
+    };
 };
 
 defineProps<Props>();
 
 const page = usePage<{ auth: Auth; flash: Flash }>();
+const copiedToken = ref(false);
+
+const copySyncToken = async (token: string | null) => {
+    if (!token || !navigator?.clipboard) {
+        return;
+    }
+
+    await navigator.clipboard.writeText(token);
+    copiedToken.value = true;
+
+    window.setTimeout(() => {
+        copiedToken.value = false;
+    }, 2000);
+};
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -70,7 +143,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                         </Badge>
                         <Heading
                             title="Gestiona tus negocios"
-                            description="Crea nuevos negocios, cambia el contexto actual y avanza al equipo del negocio activo."
+                            description="Crea nuevos negocios, cambia el contexto actual y completa la ficha operativa del negocio activo."
                         />
                     </div>
 
@@ -131,6 +204,20 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     <p class="text-sm text-muted-foreground">
                                         {{ business.slug }}
                                     </p>
+                                    <div class="grid gap-1 text-sm text-muted-foreground">
+                                        <p>
+                                            Moneda: {{ business.default_currency }}
+                                        </p>
+                                        <p v-if="business.phone">
+                                            Teléfono: {{ business.phone }}
+                                        </p>
+                                        <p v-if="business.address">
+                                            Dirección: {{ business.address }}
+                                        </p>
+                                        <p v-if="business.owner_emails.length">
+                                            Dueños: {{ business.owner_emails.join(', ') }}
+                                        </p>
+                                    </div>
                                 </div>
 
                                 <Form
@@ -160,50 +247,411 @@ const breadcrumbs: BreadcrumbItem[] = [
                     </CardContent>
                 </Card>
 
-                <Card class="rounded-3xl">
-                    <CardHeader>
-                        <CardTitle>Crear negocio</CardTitle>
-                        <CardDescription>
-                            Registra un nuevo negocio y lo dejaremos activo para ti de inmediato.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <Form
-                            v-bind="BusinessController.store.form()"
-                            class="space-y-5"
-                            v-slot="{ errors, processing }"
-                        >
-                            <div class="grid gap-2">
-                                <Label for="name">Nombre del negocio</Label>
-                                <Input
-                                    id="name"
-                                    name="name"
-                                    required
-                                    placeholder="Bodega Central"
-                                />
-                                <InputError :message="errors.name" />
+                <div class="grid gap-6">
+                    <Card class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle>Crear negocio</CardTitle>
+                            <CardDescription>
+                                Registra un nuevo negocio y lo dejaremos activo para ti de inmediato.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Form
+                                v-bind="BusinessController.store.form()"
+                                class="space-y-5"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-2">
+                                    <Label for="name">Nombre del negocio</Label>
+                                    <Input
+                                        id="name"
+                                        name="name"
+                                        required
+                                        placeholder="Bodega Central"
+                                    />
+                                    <InputError :message="errors.name" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="slug">Slug opcional</Label>
+                                    <Input
+                                        id="slug"
+                                        name="slug"
+                                        placeholder="bodega-central"
+                                    />
+                                    <InputError :message="errors.slug" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="address">Dirección</Label>
+                                    <Input
+                                        id="address"
+                                        name="address"
+                                        placeholder="Calle 10 #123 entre A y B"
+                                    />
+                                    <InputError :message="errors.address" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="phone">Teléfono</Label>
+                                    <Input
+                                        id="phone"
+                                        name="phone"
+                                        placeholder="+53 55555555"
+                                    />
+                                    <InputError :message="errors.phone" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="default_currency">Moneda</Label>
+                                    <Input
+                                        id="default_currency"
+                                        name="default_currency"
+                                        required
+                                        value="CUP"
+                                        placeholder="CUP"
+                                    />
+                                    <InputError :message="errors.default_currency" />
+                                </div>
+
+                                <Button :disabled="processing" class="w-full">
+                                    <Plus class="size-4" />
+                                    Crear negocio
+                                </Button>
+                            </Form>
+                        </CardContent>
+                        <CardFooter class="text-sm text-muted-foreground">
+                            Si no defines un slug, lo generamos automáticamente.
+                        </CardFooter>
+                    </Card>
+
+                    <Card v-if="currentBusiness" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle class="flex items-center gap-2">
+                                <Building2 class="size-4" />
+                                Configurar negocio actual
+                            </CardTitle>
+                            <CardDescription>
+                                Completa o corrige los datos operativos del negocio que tienes activo en este momento.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Form
+                                v-bind="BusinessController.update.form(currentBusiness.id)"
+                                class="space-y-5"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-2">
+                                    <Label :for="`current-name-${currentBusiness.id}`">Nombre del negocio</Label>
+                                    <Input
+                                        :id="`current-name-${currentBusiness.id}`"
+                                        name="name"
+                                        required
+                                        :value="currentBusiness.name"
+                                    />
+                                    <InputError :message="errors.name" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label :for="`current-slug-${currentBusiness.id}`">Slug</Label>
+                                    <Input
+                                        :id="`current-slug-${currentBusiness.id}`"
+                                        name="slug"
+                                        :value="currentBusiness.slug"
+                                    />
+                                    <InputError :message="errors.slug" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label :for="`current-address-${currentBusiness.id}`">Dirección</Label>
+                                    <Input
+                                        :id="`current-address-${currentBusiness.id}`"
+                                        name="address"
+                                        :value="currentBusiness.address ?? ''"
+                                        placeholder="Calle 10 #123 entre A y B"
+                                    />
+                                    <InputError :message="errors.address" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label :for="`current-phone-${currentBusiness.id}`">Teléfono</Label>
+                                    <Input
+                                        :id="`current-phone-${currentBusiness.id}`"
+                                        name="phone"
+                                        :value="currentBusiness.phone ?? ''"
+                                        placeholder="+53 55555555"
+                                    />
+                                    <InputError :message="errors.phone" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label :for="`current-currency-${currentBusiness.id}`">Moneda</Label>
+                                    <Input
+                                        :id="`current-currency-${currentBusiness.id}`"
+                                        name="default_currency"
+                                        required
+                                        :value="currentBusiness.default_currency"
+                                        placeholder="CUP"
+                                    />
+                                    <InputError :message="errors.default_currency" />
+                                </div>
+
+                                <Button :disabled="processing" class="w-full">
+                                    Guardar cambios del negocio
+                                </Button>
+                            </Form>
+                        </CardContent>
+                    </Card>
+
+                    <Card v-if="currentBusiness" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle>Precio de licencia del negocio actual</CardTitle>
+                            <CardDescription>
+                                Este cálculo usa solo puntos de venta activos y dueños activos.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent v-if="licensePricing.quote" class="space-y-4">
+                            <div class="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                                <p class="text-sm text-muted-foreground">Tarifa vigente</p>
+                                <p class="mt-2 text-3xl font-semibold">
+                                    {{ licensePricing.quote.monthlyPrice.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                                    {{ licensePricing.quote.currency }}/mes
+                                </p>
+                                <p class="mt-2 text-sm text-muted-foreground">
+                                    {{ licensePricing.quote.ruleLabel ?? 'Sin regla aplicada' }}
+                                </p>
                             </div>
 
-                            <div class="grid gap-2">
-                                <Label for="slug">Slug opcional</Label>
-                                <Input
-                                    id="slug"
-                                    name="slug"
-                                    placeholder="bodega-central"
-                                />
-                                <InputError :message="errors.slug" />
+                            <div class="grid gap-3 md:grid-cols-2">
+                                <div class="rounded-2xl border border-border/70 p-4">
+                                    <p class="text-sm text-muted-foreground">POS activos contados</p>
+                                    <p class="mt-2 text-2xl font-semibold">{{ licensePricing.quote.activePosCount }}</p>
+                                </div>
+                                <div class="rounded-2xl border border-border/70 p-4">
+                                    <p class="text-sm text-muted-foreground">Dueños activos contados</p>
+                                    <p class="mt-2 text-2xl font-semibold">{{ licensePricing.quote.activeOwnerCount }}</p>
+                                </div>
                             </div>
 
-                            <Button :disabled="processing" class="w-full">
-                                <Plus class="size-4" />
-                                Crear negocio
-                            </Button>
-                        </Form>
-                    </CardContent>
-                    <CardFooter class="text-sm text-muted-foreground">
-                        Si no defines un slug, lo generamos automáticamente.
-                    </CardFooter>
-                </Card>
+                            <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                                <p><strong>Ventana de operaciones regulares:</strong> {{ licensePricing.quote.operationWindowDays }} días.</p>
+                                <p class="mt-2">{{ licensePricing.quote.ruleDescription ?? 'La tarifa se determina por el tramo configurado en el tarifario activo.' }}</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card v-if="page.props.auth.user?.is_platform_admin" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle>Tarifario de licencias</CardTitle>
+                            <CardDescription>
+                                Configura las reglas globales de cobro y define cuántos días cuentan para considerar un POS con operaciones regulares.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent class="space-y-6">
+                            <Form
+                                v-bind="LicensePricingController.updateConfig.form()"
+                                class="space-y-4 rounded-2xl border border-border/70 p-4"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-2">
+                                    <Label for="active_pos_operation_window_days">Ventana de operación regular (días)</Label>
+                                    <Input
+                                        id="active_pos_operation_window_days"
+                                        name="active_pos_operation_window_days"
+                                        type="number"
+                                        min="1"
+                                        :value="licensePricing.config.active_pos_operation_window_days"
+                                    />
+                                    <InputError :message="errors.active_pos_operation_window_days" />
+                                </div>
+
+                                <Button :disabled="processing" variant="outline">
+                                    Guardar ventana de actividad
+                                </Button>
+                            </Form>
+
+                            <div class="space-y-4">
+                                <article
+                                    v-for="rule in licensePricing.rules"
+                                    :key="rule.id"
+                                    class="rounded-2xl border border-border/70 p-4"
+                                >
+                                    <Form
+                                        v-bind="LicensePricingController.update.form(rule.id)"
+                                        class="space-y-4"
+                                        v-slot="{ processing }"
+                                    >
+                                        <div class="grid gap-4 md:grid-cols-2">
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-name-${rule.id}`">Nombre</Label>
+                                                <Input :id="`rule-name-${rule.id}`" name="name" :value="rule.name" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-currency-${rule.id}`">Moneda</Label>
+                                                <Input :id="`rule-currency-${rule.id}`" name="currency" :value="rule.currency" />
+                                            </div>
+                                            <div class="grid gap-2 md:col-span-2">
+                                                <Label :for="`rule-description-${rule.id}`">Descripción</Label>
+                                                <Input :id="`rule-description-${rule.id}`" name="description" :value="rule.description ?? ''" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-price-${rule.id}`">Precio mensual</Label>
+                                                <Input :id="`rule-price-${rule.id}`" name="monthly_price" type="number" step="0.01" min="0" :value="rule.monthly_price" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-sort-${rule.id}`">Orden</Label>
+                                                <Input :id="`rule-sort-${rule.id}`" name="sort_order" type="number" min="0" :value="rule.sort_order" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-min-pos-${rule.id}`">POS activos mínimo</Label>
+                                                <Input :id="`rule-min-pos-${rule.id}`" name="min_active_pos" type="number" min="0" :value="rule.min_active_pos" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-max-pos-${rule.id}`">POS activos máximo</Label>
+                                                <Input :id="`rule-max-pos-${rule.id}`" name="max_active_pos" type="number" min="0" :value="rule.max_active_pos ?? ''" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-min-owners-${rule.id}`">Dueños activos mínimo</Label>
+                                                <Input :id="`rule-min-owners-${rule.id}`" name="min_active_owners" type="number" min="0" :value="rule.min_active_owners ?? ''" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-max-owners-${rule.id}`">Dueños activos máximo</Label>
+                                                <Input :id="`rule-max-owners-${rule.id}`" name="max_active_owners" type="number" min="0" :value="rule.max_active_owners ?? ''" />
+                                            </div>
+                                        </div>
+
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="hidden" name="is_active" value="0" />
+                                            <input type="checkbox" name="is_active" value="1" :checked="rule.is_active" />
+                                            Regla activa
+                                        </label>
+
+                                        <div class="flex flex-col gap-3 md:flex-row">
+                                            <Button :disabled="processing" variant="outline">Guardar regla</Button>
+                                        </div>
+                                    </Form>
+                                    <Form
+                                        v-bind="LicensePricingController.destroy.form(rule.id)"
+                                        class="mt-3 flex"
+                                        v-slot="{ processing: deleting }"
+                                    >
+                                        <Button :disabled="deleting" variant="destructive" type="submit">Eliminar</Button>
+                                    </Form>
+                                </article>
+                            </div>
+
+                            <Form
+                                v-bind="LicensePricingController.store.form()"
+                                class="space-y-4 rounded-2xl border border-dashed border-border p-4"
+                                v-slot="{ processing }"
+                            >
+                                <h3 class="text-base font-semibold">Crear nueva regla</h3>
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-name">Nombre</Label>
+                                        <Input id="new-rule-name" name="name" placeholder="Hasta 5 POS activos" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-currency">Moneda</Label>
+                                        <Input id="new-rule-currency" name="currency" value="CUP" />
+                                    </div>
+                                    <div class="grid gap-2 md:col-span-2">
+                                        <Label for="new-rule-description">Descripción</Label>
+                                        <Input id="new-rule-description" name="description" placeholder="Describe cuándo aplica esta regla." />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-price">Precio mensual</Label>
+                                        <Input id="new-rule-price" name="monthly_price" type="number" min="0" step="0.01" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-order">Orden</Label>
+                                        <Input id="new-rule-order" name="sort_order" type="number" min="0" value="50" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-min-pos">POS activos mínimo</Label>
+                                        <Input id="new-rule-min-pos" name="min_active_pos" type="number" min="0" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-max-pos">POS activos máximo</Label>
+                                        <Input id="new-rule-max-pos" name="max_active_pos" type="number" min="0" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-min-owners">Dueños activos mínimo</Label>
+                                        <Input id="new-rule-min-owners" name="min_active_owners" type="number" min="0" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-max-owners">Dueños activos máximo</Label>
+                                        <Input id="new-rule-max-owners" name="max_active_owners" type="number" min="0" />
+                                    </div>
+                                </div>
+
+                                <label class="flex items-center gap-2 text-sm">
+                                    <input type="hidden" name="is_active" value="0" />
+                                    <input type="checkbox" name="is_active" value="1" checked />
+                                    Regla activa
+                                </label>
+
+                                <Button :disabled="processing" class="w-full">Crear regla</Button>
+                            </Form>
+                        </CardContent>
+                    </Card>
+
+                    <Card v-if="currentBusiness" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle class="flex items-center gap-2">
+                                <KeyRound class="size-4" />
+                                Token de sincronización
+                            </CardTitle>
+                            <CardDescription>
+                                Genera un token nuevo para el negocio actual y compártelo con el dueño que vaya a configurar la app. El valor solo se muestra una vez.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent class="space-y-5">
+                            <div class="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+                                <p v-if="currentBusiness.owner_emails.length">
+                                    Se emitirá para: {{ currentBusiness.owner_emails.join(', ') }}
+                                </p>
+                                <p v-else>
+                                    Este negocio todavía no tiene dueños activos asociados en el backoffice.
+                                </p>
+                            </div>
+
+                            <Form
+                                :action="`/backoffice/businesses/${currentBusiness.id}/sync-token`"
+                                method="post"
+                                class="space-y-4"
+                                v-slot="{ processing }"
+                            >
+                                <Button :disabled="processing || !currentBusiness.owner_emails.length" class="w-full">
+                                    <KeyRound class="size-4" />
+                                    {{ processing ? 'Generando token...' : 'Generar nuevo token' }}
+                                </Button>
+                            </Form>
+
+                            <div
+                                v-if="generatedSyncToken.token"
+                                class="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4"
+                            >
+                                <p class="text-sm font-medium text-amber-900">
+                                    Token visible solo una vez
+                                </p>
+                                <p class="text-sm text-amber-800">
+                                    Dueño asociado: {{ generatedSyncToken.owner_email ?? 'No disponible' }}
+                                </p>
+                                <p v-if="generatedSyncToken.warning" class="text-sm text-amber-800">
+                                    {{ generatedSyncToken.warning }}
+                                </p>
+                                <div class="flex flex-col gap-3 md:flex-row">
+                                    <Input readonly :value="generatedSyncToken.token" class="font-mono text-xs" />
+                                    <Button type="button" variant="outline" class="shrink-0" @click="copySyncToken(generatedSyncToken.token)">
+                                        <Copy class="size-4" />
+                                        {{ copiedToken ? 'Copiado' : 'Copiar token' }}
+                                    </Button>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         </div>
     </AppLayout>

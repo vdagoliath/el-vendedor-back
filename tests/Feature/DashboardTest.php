@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Business;
 use App\Models\User;
 
 test('guests are redirected to the login page', function () {
@@ -7,8 +8,11 @@ test('guests are redirected to the login page', function () {
     $response->assertRedirect(route('login'));
 });
 
-test('authenticated users can visit the dashboard', function () {
-    $user = User::factory()->create();
+test('backoffice users can visit the dashboard', function () {
+    $user = User::factory()->backofficeImplementer()->create();
+    $business = Business::factory()->create();
+
+    $user->switchCurrentBusiness($business);
     $this->actingAs($user);
 
     $response = $this->get(route('dashboard'));

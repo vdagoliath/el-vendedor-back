@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Backoffice;
 
+use App\Models\Business;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Str;
@@ -24,9 +25,15 @@ class StoreBusinessRequest extends FormRequest
      */
     public function rules(): array
     {
+        $business = $this->route('business');
+        $businessId = $business instanceof Business ? $business->getKey() : $business;
+
         return [
             'name' => ['required', 'string', 'max:255'],
-            'slug' => ['nullable', 'string', 'max:255', Rule::unique('businesses', 'slug')],
+            'slug' => ['nullable', 'string', 'max:255', Rule::unique('businesses', 'slug')->ignore($businessId)],
+            'address' => ['nullable', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:50'],
+            'default_currency' => ['required', 'string', 'max:10'],
         ];
     }
 
@@ -40,6 +47,9 @@ class StoreBusinessRequest extends FormRequest
             'slug' => $this->filled('slug')
                 ? Str::slug(trim((string) $this->input('slug')))
                 : null,
+            'address' => $this->filled('address') ? trim((string) $this->input('address')) : null,
+            'phone' => $this->filled('phone') ? trim((string) $this->input('phone')) : null,
+            'default_currency' => Str::upper(trim((string) $this->input('default_currency', 'CUP'))),
         ]);
     }
 }

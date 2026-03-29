@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
+use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\ContactPayloadNormalizer;
 use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
@@ -20,7 +21,8 @@ use Throwable;
 class SyncPullController extends Controller
 {
     public function __construct(
-        private readonly ContactPayloadNormalizer $contactPayloadNormalizer
+        private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
+        private readonly BusinessLicensePricingResolver $pricingResolver
     ) {}
 
     /**
@@ -37,6 +39,8 @@ class SyncPullController extends Controller
         $responseBoundary = now();
         $limit = (int) ($request->integer('limit') ?: 500);
         $changes = $this->getBusinessProfileChanges($business, $requestedCursor, $responseBoundary)
+            ->concat($this->getLicenseCatalogChanges($business, $requestedCursor, $responseBoundary))
+            ->concat($this->getLicenseQuoteChanges($business, $responseBoundary))
             ->concat($this->getEventChanges($business, $requestedCursor, $responseBoundary, $limit))
             ->concat($this->getProductChanges($business, $requestedCursor, $responseBoundary, $limit))
             ->sortBy([
@@ -148,6 +152,62 @@ class SyncPullController extends Controller
                 'operation' => 'upsert',
                 'occurred_at' => ($business->updated_at ?? $business->created_at ?? now())?->toIso8601String(),
                 'payload' => $this->toBusinessProfilePayload($business),
+            ],
+        ]);
+    }
+
+    /**
+     * Return the pricing catalog when it changes.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function getLicenseCatalogChanges(
+        Business $business,
+        ?Carbon $requestedCursor,
+        CarbonInterface $responseBoundary
+    ): Collection {
+        $catalog = $this->pricingResolver->catalog();
+        $updatedAt = isset($catalog['updatedAt']) ? Carbon::parse((string) $catalog['updatedAt']) : null;
+
+        if (! $updatedAt) {
+            return collect();
+        }
+
+        if ($updatedAt->greaterThan($responseBoundary)) {
+            return collect();
+        }
+
+        if ($requestedCursor && $updatedAt->lessThanOrEqualTo($requestedCursor)) {
+            return collect();
+        }
+
+        return collect([
+            [
+                'event_id' => 'server:license_catalog:'.$business->id.':'.$updatedAt->timestamp,
+                'entity_type' => 'license_catalog',
+                'entity_id' => 'license_catalog',
+                'operation' => 'upsert',
+                'occurred_at' => $updatedAt->toIso8601String(),
+                'payload' => $catalog,
+            ],
+        ]);
+    }
+
+    /**
+     * Return the business pricing quote on every pull so it stays fresh with active POS changes.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function getLicenseQuoteChanges(Business $business, CarbonInterface $responseBoundary): Collection
+    {
+        return collect([
+            [
+                'event_id' => 'server:license_quote:'.$business->id.':'.$responseBoundary->timestamp,
+                'entity_type' => 'license_quote',
+                'entity_id' => 'current_business_license_quote',
+                'operation' => 'upsert',
+                'occurred_at' => $responseBoundary->toIso8601String(),
+                'payload' => $this->pricingResolver->quote($business),
             ],
         ]);
     }
