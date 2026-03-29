@@ -5,6 +5,8 @@ namespace Database\Seeders;
 use App\Enums\BackofficeRole;
 use App\Models\User;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class SupremeAdminSeeder extends Seeder
 {
@@ -19,10 +21,16 @@ class SupremeAdminSeeder extends Seeder
     {
         $supremeAdmin = User::query()->firstOrCreate(
             ['email' => self::EMAIL],
-            User::factory()->platformAdmin()->raw([
+            [
                 'name' => self::NAME,
                 'email' => self::EMAIL,
-            ]),
+                'locale' => config('app.locale'),
+                'email_verified_at' => now(),
+                'backoffice_role' => BackofficeRole::SuperAdmin,
+                'is_platform_admin' => true,
+                'password' => Hash::make('password'),
+                'remember_token' => Str::random(10),
+            ],
         );
 
         if (! $supremeAdmin->is_platform_admin || $supremeAdmin->getEffectiveBackofficeRole() !== BackofficeRole::SuperAdmin) {
