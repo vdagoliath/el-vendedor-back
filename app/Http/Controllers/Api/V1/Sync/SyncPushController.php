@@ -11,6 +11,7 @@ use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
 use App\Support\Sync\ContactPayloadNormalizer;
+use App\Support\Sync\SyncCompatibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Throwable;
@@ -18,7 +19,8 @@ use Throwable;
 class SyncPushController extends Controller
 {
     public function __construct(
-        private readonly ContactPayloadNormalizer $contactPayloadNormalizer
+        private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
+        private readonly SyncCompatibility $syncCompatibility
     ) {}
 
     /**
@@ -90,7 +92,7 @@ class SyncPushController extends Controller
                     'error_message' => $exception->getMessage(),
                 ])->save();
 
-                $this->recordConflict($business, $request, $device, $change, $exception);
+                $conflictType = $this->recordConflict($business, $request, $device, $change, $exception);
 
                 $rejected[] = [
                     'event_id' => $change['event_id'],
@@ -98,6 +100,9 @@ class SyncPushController extends Controller
                     'entity_id' => $change['entity_id'],
                     'status' => 'failed',
                     'reason' => $exception->getMessage(),
+                    'code' => $this->resolveChangeErrorCode($exception, $conflictType),
+                    'retryable' => $this->isRetryableChangeError($exception, $conflictType),
+                    'conflict_type' => $conflictType,
                 ];
             }
         }
@@ -140,26 +145,29 @@ class SyncPushController extends Controller
         /** @var array{id:string,name:?string,platform:?string,app_version:?string} $devicePayload */
         $devicePayload = $request->validated('device');
 
-        return Device::query()->updateOrCreate(
-            ['id' => $devicePayload['id']],
-            [
-                'business_id' => $business->id,
-                'user_id' => $request->user()?->id,
-                'name' => $devicePayload['name'],
-                'platform' => $devicePayload['platform'],
-                'app_version' => $devicePayload['app_version'],
-                'is_active' => true,
-                'last_seen_at' => now(),
-                'last_synced_at' => now(),
-            ]
-        );
+        $device = Device::query()->firstOrNew(['id' => $devicePayload['id']]);
+        $existingMeta = is_array($device->meta) ? $device->meta : [];
+
+        $device->fill([
+            'business_id' => $business->id,
+            'user_id' => $request->user()?->id,
+            'name' => $devicePayload['name'],
+            'platform' => $devicePayload['platform'],
+            'app_version' => $this->syncCompatibility->clientAppVersion($request) ?? $devicePayload['app_version'],
+            'is_active' => true,
+            'last_seen_at' => now(),
+            'last_synced_at' => now(),
+            'meta' => array_filter(array_merge($existingMeta, [
+                'sync_version' => $this->syncCompatibility->clientSyncVersion($request),
+                'last_sync_stage' => 'push',
+            ]), static fn (mixed $value): bool => $value !== null),
+        ]);
+
+        $device->save();
+
+        return $device;
     }
 
-    /**
-     * Apply a supported domain change.
-     *
-     * @param  array<string, mixed>  $change
-     */
     /**
      * Normalize change aliases and payloads before they are persisted.
      *
@@ -192,6 +200,8 @@ class SyncPushController extends Controller
     }
 
     /**
+     * Apply a supported domain change.
+     *
      * @param  array<string, mixed>  $change
      */
     private function applyChange(Business $business, mixed $user, SyncReceivedEvent $event, array $change): string
@@ -371,9 +381,9 @@ class SyncPushController extends Controller
         Device $device,
         array $change,
         Throwable $exception
-    ): void {
+    ): ?string {
         if ($change['entity_type'] !== 'products') {
-            return;
+            return null;
         }
 
         $remotePayload = null;
@@ -391,6 +401,8 @@ class SyncPushController extends Controller
             }
         }
 
+        $conflictType = $remotePayload ? 'duplicate_code' : 'apply_error';
+
         SyncConflict::query()->create([
             'business_id' => $business->id,
             'user_id' => $request->user()?->id,
@@ -398,11 +410,13 @@ class SyncPushController extends Controller
             'event_id' => $change['event_id'],
             'entity_type' => $change['entity_type'],
             'entity_id' => $change['entity_id'],
-            'conflict_type' => $remotePayload ? 'duplicate_code' : 'apply_error',
+            'conflict_type' => $conflictType,
             'local_payload' => is_array($change['payload'] ?? null) ? $change['payload'] : null,
             'remote_payload' => $remotePayload,
             'status' => 'open',
         ]);
+
+        return $conflictType;
     }
 
     private function parseDate(mixed $value): ?Carbon
@@ -441,6 +455,40 @@ class SyncPushController extends Controller
         $normalized = trim($value);
 
         return $normalized === '' ? null : $normalized;
+    }
+
+    private function resolveChangeErrorCode(Throwable $exception, ?string $conflictType): string
+    {
+        $message = strtolower(trim($exception->getMessage()));
+
+        if ($conflictType === 'duplicate_code') {
+            return 'sync_duplicate_product_code';
+        }
+
+        if (str_contains($message, 'no puede gestionar')) {
+            return 'sync_permission_denied';
+        }
+
+        if (str_contains($message, 'no tiene codigo') || str_contains($message, 'no tiene nombre')) {
+            return 'sync_invalid_payload';
+        }
+
+        return 'sync_apply_error';
+    }
+
+    private function isRetryableChangeError(Throwable $exception, ?string $conflictType): bool
+    {
+        if ($conflictType === 'duplicate_code') {
+            return false;
+        }
+
+        $message = strtolower(trim($exception->getMessage()));
+
+        if (str_contains($message, 'no puede gestionar') || str_contains($message, 'no tiene codigo') || str_contains($message, 'no tiene nombre')) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

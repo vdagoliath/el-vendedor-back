@@ -5,6 +5,7 @@ use App\Http\Middleware\EnsureBackofficeSuperAdmin;
 use App\Http\Middleware\EnsureCurrentBusiness;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\HandleSyncRequest;
 use App\Http\Middleware\SetLocaleFromUser;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -26,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'backoffice.access' => EnsureBackofficeAccess::class,
             'backoffice.super-admin' => EnsureBackofficeSuperAdmin::class,
             'current.business' => EnsureCurrentBusiness::class,
+            'sync.request' => HandleSyncRequest::class,
         ]);
 
         $middleware->web(append: [

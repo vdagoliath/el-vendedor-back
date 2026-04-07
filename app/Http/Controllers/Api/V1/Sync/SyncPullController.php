@@ -12,6 +12,7 @@ use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
 use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\ContactPayloadNormalizer;
+use App\Support\Sync\SyncCompatibility;
 use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
@@ -22,7 +23,8 @@ class SyncPullController extends Controller
 {
     public function __construct(
         private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
-        private readonly BusinessLicensePricingResolver $pricingResolver
+        private readonly BusinessLicensePricingResolver $pricingResolver,
+        private readonly SyncCompatibility $syncCompatibility
     ) {}
 
     /**
@@ -217,16 +219,26 @@ class SyncPullController extends Controller
      */
     private function touchDevice(PullSyncRequest $request, Business $business): Device
     {
-        return Device::query()->updateOrCreate(
-            ['id' => $request->string('device_id')->toString()],
-            [
-                'business_id' => $business->id,
-                'user_id' => $request->user()?->id,
-                'is_active' => true,
-                'last_seen_at' => now(),
-                'last_synced_at' => now(),
-            ]
-        );
+        $deviceId = $request->string('device_id')->toString();
+        $device = Device::query()->firstOrNew(['id' => $deviceId]);
+        $existingMeta = is_array($device->meta) ? $device->meta : [];
+
+        $device->fill([
+            'business_id' => $business->id,
+            'user_id' => $request->user()?->id,
+            'app_version' => $this->syncCompatibility->clientAppVersion($request),
+            'is_active' => true,
+            'last_seen_at' => now(),
+            'last_synced_at' => now(),
+            'meta' => array_filter(array_merge($existingMeta, [
+                'sync_version' => $this->syncCompatibility->clientSyncVersion($request),
+                'last_sync_stage' => 'pull',
+            ]), static fn (mixed $value): bool => $value !== null),
+        ]);
+
+        $device->save();
+
+        return $device;
     }
 
     private function parseCursor(?string $cursor): ?Carbon

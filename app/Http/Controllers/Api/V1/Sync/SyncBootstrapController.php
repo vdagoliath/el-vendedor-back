@@ -5,13 +5,15 @@ namespace App\Http\Controllers\Api\V1\Sync;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Support\Licensing\BusinessLicensePricingResolver;
+use App\Support\Sync\SyncCompatibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class SyncBootstrapController extends Controller
 {
     public function __construct(
-        private readonly BusinessLicensePricingResolver $pricingResolver
+        private readonly BusinessLicensePricingResolver $pricingResolver,
+        private readonly SyncCompatibility $syncCompatibility
     ) {}
 
     /**
@@ -25,7 +27,8 @@ class SyncBootstrapController extends Controller
 
         return response()->json([
             'server_time' => now()->toIso8601String(),
-            'sync_version' => 1,
+            'sync_version' => $this->syncCompatibility->currentProtocolVersion(),
+            'compatibility' => $this->syncCompatibility->bootstrapPayload(),
             'current_business' => [
                 'id' => $business->id,
                 'name' => $business->name,

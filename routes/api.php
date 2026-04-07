@@ -34,7 +34,7 @@ Route::prefix('v1')
                 });
             });
 
-        Route::middleware(['auth:sanctum', 'current.business'])
+        Route::middleware(['auth:sanctum', 'current.business', 'sync.request'])
             ->prefix('sync')
             ->name('sync.')
             ->group(function (): void {
