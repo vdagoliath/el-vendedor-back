@@ -2,8 +2,10 @@
 
 use App\Enums\BusinessRole;
 use App\Models\Business;
+use App\Models\Product;
 use App\Models\SyncReceivedEvent;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 
 beforeEach(function () {
     config()->set('sync.protocol_version', 1);
@@ -186,4 +188,78 @@ test('employees can sync customer contacts', function () {
     expect($event->status)->toBe('applied');
     expect($event->payload['type'] ?? null)->toBe('customer');
     expect($event->payload['name'] ?? null)->toBe('Cliente Permitido');
+});
+
+test('pull pagination advances cursor using product updated_at even when source_updated_at is stale', function () {
+    $user = User::factory()->create();
+    $business = Business::factory()->create();
+
+    $user->businesses()->attach($business, [
+        'role' => BusinessRole::Owner->value,
+        'is_active' => true,
+    ]);
+
+    $user->switchCurrentBusiness($business);
+
+    $token = $user->createToken('sync-product-cursor')->plainTextToken;
+    $staleOccurredAt = Carbon::parse('2026-04-01 09:00:00');
+    $firstUpdatedAt = Carbon::parse('2026-04-08 09:00:01');
+    $secondUpdatedAt = Carbon::parse('2026-04-08 09:00:02');
+
+    $firstProduct = new Product();
+    $firstProduct->timestamps = false;
+    $firstProduct->forceFill([
+        'business_id' => $business->id,
+        'external_id' => 'product-cursor-1',
+        'code' => 'PC-001',
+        'title' => 'Producto Cursor 1',
+        'type' => 'product',
+        'regular_price' => 10,
+        'purchase_price' => 5,
+        'barcode_type' => 'C128',
+        'source_created_at' => $staleOccurredAt,
+        'source_updated_at' => $staleOccurredAt,
+        'created_at' => $firstUpdatedAt,
+        'updated_at' => $firstUpdatedAt,
+    ])->save();
+
+    $secondProduct = new Product();
+    $secondProduct->timestamps = false;
+    $secondProduct->forceFill([
+        'business_id' => $business->id,
+        'external_id' => 'product-cursor-2',
+        'code' => 'PC-002',
+        'title' => 'Producto Cursor 2',
+        'type' => 'product',
+        'regular_price' => 12,
+        'purchase_price' => 6,
+        'barcode_type' => 'C128',
+        'source_created_at' => $staleOccurredAt,
+        'source_updated_at' => $staleOccurredAt,
+        'created_at' => $secondUpdatedAt,
+        'updated_at' => $secondUpdatedAt,
+    ])->save();
+
+    $firstPullResponse = $this->withToken($token)
+        ->withHeaders(syncHeaders())
+        ->getJson('/api/v1/sync/pull?device_id=device-product-cursor-1&limit=1');
+
+    $firstPullResponse
+        ->assertOk()
+        ->assertJsonCount(1, 'changes')
+        ->assertJsonPath('changes.0.entity_id', 'product-cursor-1')
+        ->assertJsonPath('changes.0.occurred_at', $staleOccurredAt->toIso8601String())
+        ->assertJsonPath('meta.has_more', true)
+        ->assertJsonPath('cursor', $firstUpdatedAt->toIso8601String());
+
+    $secondPullResponse = $this->withToken($token)
+        ->withHeaders(syncHeaders())
+        ->getJson('/api/v1/sync/pull?device_id=device-product-cursor-1&limit=1&cursor='.urlencode($firstPullResponse->json('cursor')));
+
+    $secondPullResponse
+        ->assertOk()
+        ->assertJsonCount(1, 'changes')
+        ->assertJsonPath('changes.0.entity_id', 'product-cursor-2');
+
+    expect($secondPullResponse->json('cursor'))->not->toBe($firstPullResponse->json('cursor'));
 });

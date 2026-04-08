@@ -46,16 +46,17 @@ class SyncPullController extends Controller
             ->concat($this->getEventChanges($business, $requestedCursor, $responseBoundary, $limit))
             ->concat($this->getProductChanges($business, $requestedCursor, $responseBoundary, $limit))
             ->sortBy([
-                ['occurred_at', 'asc'],
+                ['cursor_at', 'asc'],
                 ['entity_type', 'asc'],
                 ['entity_id', 'asc'],
+                ['event_id', 'asc'],
             ])
             ->take($limit + 1)
             ->values();
         $hasMore = $changes->count() > $limit;
         $visibleChanges = $hasMore ? $changes->take($limit)->values() : $changes->values();
         $cursor = $hasMore
-            ? ($visibleChanges->last()['occurred_at'] ?? $responseBoundary->toIso8601String())
+            ? ($visibleChanges->last()['cursor_at'] ?? $responseBoundary->toIso8601String())
             : $responseBoundary->toIso8601String();
         $conflicts = $this->getOpenConflicts($business, $requestedCursor);
 
@@ -74,7 +75,9 @@ class SyncPullController extends Controller
         return response()->json([
             'cursor' => $cursor,
             'server_time' => $responseBoundary->toIso8601String(),
-            'changes' => $visibleChanges->all(),
+            'changes' => $visibleChanges
+                ->map(fn (array $change): array => $this->stripCursorMetadata($change))
+                ->all(),
             'conflicts' => $conflicts,
             'meta' => [
                 'requested_cursor' => $requestedCursor?->toIso8601String(),
@@ -123,6 +126,7 @@ class SyncPullController extends Controller
                 'entity_id' => $event->entity_id,
                 'operation' => $event->operation,
                 'occurred_at' => ($event->occurred_at ?? $event->processed_at ?? $event->updated_at)?->toIso8601String(),
+                'cursor_at' => ($event->updated_at ?? $event->processed_at ?? $event->occurred_at)?->toIso8601String(),
                 'payload' => $payload,
             ];
         });
@@ -153,6 +157,7 @@ class SyncPullController extends Controller
                 'entity_id' => 'current_business',
                 'operation' => 'upsert',
                 'occurred_at' => ($business->updated_at ?? $business->created_at ?? now())?->toIso8601String(),
+                'cursor_at' => ($business->updated_at ?? $business->created_at ?? now())?->toIso8601String(),
                 'payload' => $this->toBusinessProfilePayload($business),
             ],
         ]);
@@ -190,6 +195,7 @@ class SyncPullController extends Controller
                 'entity_id' => 'license_catalog',
                 'operation' => 'upsert',
                 'occurred_at' => $updatedAt->toIso8601String(),
+                'cursor_at' => $updatedAt->toIso8601String(),
                 'payload' => $catalog,
             ],
         ]);
@@ -209,6 +215,7 @@ class SyncPullController extends Controller
                 'entity_id' => 'current_business_license_quote',
                 'operation' => 'upsert',
                 'occurred_at' => $responseBoundary->toIso8601String(),
+                'cursor_at' => $responseBoundary->toIso8601String(),
                 'payload' => $this->pricingResolver->quote($business),
             ],
         ]);
@@ -287,9 +294,23 @@ class SyncPullController extends Controller
                 'entity_id' => $product->external_id,
                 'operation' => $product->deleted_at ? 'delete' : 'upsert',
                 'occurred_at' => $occurredAt?->toIso8601String(),
+                'cursor_at' => ($product->updated_at ?? $occurredAt ?? $product->created_at)?->toIso8601String(),
                 'payload' => $this->toProductPayload($product),
             ];
         });
+    }
+
+    /**
+     * Remove internal pagination metadata before returning the payload to the client.
+     *
+     * @param  array<string, mixed>  $change
+     * @return array<string, mixed>
+     */
+    private function stripCursorMetadata(array $change): array
+    {
+        unset($change['cursor_at']);
+
+        return $change;
     }
 
     /**
