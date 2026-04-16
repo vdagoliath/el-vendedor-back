@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Auth\AuthenticatedTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedUserController;
 use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
 use App\Http\Controllers\Api\V1\Auth\RegisteredUserController;
+use App\Http\Controllers\Api\V1\Auth\SellerInvitationController;
 use App\Http\Controllers\Api\V1\Sync\SyncBootstrapController;
 use App\Http\Controllers\Api\V1\Sync\SyncPullController;
 use App\Http\Controllers\Api\V1\Sync\SyncPushController;
@@ -27,14 +28,25 @@ Route::prefix('v1')
                     ->middleware('throttle:login')
                     ->name('sync-token');
 
+                Route::post('seller-token', [SellerInvitationController::class, 'claim'])
+                    ->middleware('throttle:login')
+                    ->name('seller-token');
+
                 Route::middleware('auth:sanctum')->group(function (): void {
                     Route::get('me', [AuthenticatedUserController::class, 'show'])->name('me');
                     Route::put('current-business', [CurrentBusinessController::class, 'update'])->name('current-business.update');
                     Route::post('logout', [AuthenticatedTokenController::class, 'destroy'])->name('logout');
+
+                    Route::middleware('ability:sync:owner')->group(function (): void {
+                        Route::post('seller-invitations', [SellerInvitationController::class, 'store'])
+                            ->name('seller-invitations.store');
+                        Route::get('seller-invitations', [SellerInvitationController::class, 'index'])
+                            ->name('seller-invitations.index');
+                    });
                 });
             });
 
-        Route::middleware(['auth:sanctum', 'current.business', 'sync.request'])
+        Route::middleware(['auth:sanctum', 'abilities:sync:owner,sync:seller', 'current.business', 'sync.request'])
             ->prefix('sync')
             ->name('sync.')
             ->group(function (): void {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Sync\PushSyncRequest;
 use App\Models\Business;
 use App\Models\Device;
+use App\Models\PersonalAccessToken;
 use App\Models\Product;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
@@ -18,6 +19,24 @@ use Throwable;
 
 class SyncPushController extends Controller
 {
+    /**
+     * Entity types that sellers are NOT allowed to push.
+     * Anything not in this list is permitted for sellers too.
+     */
+    private const SELLER_FORBIDDEN_ENTITY_TYPES = [
+        'purchases',
+        'products',
+        'business_profile',
+        'categories',
+        'units',
+        'warehouses',
+        'points_of_sale',
+        'employees',
+        'expenses',
+        'license_catalog',
+        'license_quote',
+    ];
+
     public function __construct(
         private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
         private readonly SyncCompatibility $syncCompatibility
@@ -32,6 +51,16 @@ class SyncPushController extends Controller
 
         abort_unless($business instanceof Business, 409, 'No existe un negocio actual activo para sincronizar.');
 
+        /** @var PersonalAccessToken|null $accessToken */
+        $accessToken = $request->user()?->currentAccessToken();
+        $ability = $this->resolveTokenAbility($accessToken);
+        $employeeExternalId = $accessToken?->employee_external_id;
+
+        // Defense-in-depth: token must be scoped to the same business.
+        if ($accessToken && $accessToken->business_id !== null && $accessToken->business_id !== $business->id) {
+            abort(403, 'El token no está autorizado para este negocio.');
+        }
+
         $device = $this->upsertDevice($request, $business);
 
         $accepted = [];
@@ -40,6 +69,20 @@ class SyncPushController extends Controller
 
         foreach ($request->validated('changes') as $change) {
             $change = $this->normalizeChange($change);
+
+            if (! $this->isEntityTypeAllowedForAbility($change['entity_type'], $ability)) {
+                $rejected[] = [
+                    'event_id' => $change['event_id'],
+                    'entity_type' => $change['entity_type'],
+                    'entity_id' => $change['entity_id'],
+                    'status' => 'rejected',
+                    'reason' => 'El tipo de entidad no está permitido para este dispositivo.',
+                    'code' => 'sync_entity_forbidden',
+                    'retryable' => false,
+                ];
+
+                continue;
+            }
 
             $existingEvent = SyncReceivedEvent::query()
                 ->where('business_id', $business->id)
@@ -61,6 +104,8 @@ class SyncPushController extends Controller
                 'business_id' => $business->id,
                 'user_id' => $request->user()?->id,
                 'device_id' => $device->id,
+                'employee_external_id' => $employeeExternalId,
+                'token_ability' => $ability,
                 'event_id' => $change['event_id'],
                 'entity_type' => $change['entity_type'],
                 'entity_id' => $change['entity_id'],
@@ -71,7 +116,7 @@ class SyncPushController extends Controller
             ]);
 
             try {
-                $status = $this->applyChange($business, $request->user(), $event, $change);
+                $status = $this->applyChange($business, $request->user(), $event, $change, $ability);
 
                 $event->forceFill([
                     'status' => $status,
@@ -135,6 +180,38 @@ class SyncPushController extends Controller
                 'device_id' => $device->id,
             ],
         ], 202);
+    }
+
+    /**
+     * Returns 'sync:owner', 'sync:seller' or null if token has no known sync ability.
+     */
+    private function resolveTokenAbility(?PersonalAccessToken $token): ?string
+    {
+        if (! $token) {
+            return null;
+        }
+
+        foreach (['sync:owner', 'sync:seller'] as $candidate) {
+            if ($token->can($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function isEntityTypeAllowedForAbility(string $entityType, ?string $ability): bool
+    {
+        // Owner and legacy unscoped tokens can push any entity type.
+        if ($ability === null || $ability === 'sync:owner') {
+            return true;
+        }
+
+        if ($ability === 'sync:seller') {
+            return ! in_array($entityType, self::SELLER_FORBIDDEN_ENTITY_TYPES, true);
+        }
+
+        return false;
     }
 
     /**
@@ -204,10 +281,10 @@ class SyncPushController extends Controller
      *
      * @param  array<string, mixed>  $change
      */
-    private function applyChange(Business $business, mixed $user, SyncReceivedEvent $event, array $change): string
+    private function applyChange(Business $business, mixed $user, SyncReceivedEvent $event, array $change, ?string $ability = null): string
     {
         if ($change['entity_type'] === 'contacts') {
-            $this->assertContactPermission($business, $user, $change);
+            $this->assertContactPermission($business, $user, $change, $ability);
 
             return 'applied';
         }
@@ -236,7 +313,7 @@ class SyncPushController extends Controller
      *
      * @param  array<string, mixed>  $change
      */
-    private function assertContactPermission(Business $business, mixed $user, array $change): void
+    private function assertContactPermission(Business $business, mixed $user, array $change, ?string $ability = null): void
     {
         $contactType = null;
 
@@ -246,7 +323,13 @@ class SyncPushController extends Controller
 
         $normalizedType = is_string($contactType) ? strtolower(trim($contactType)) : null;
 
-        if (! $user?->canManageContactTypeInBusiness($business, $normalizedType)) {
+        // Sellers may only sync customer contacts; the token ability enforces this
+        // regardless of the owning user's permissions.
+        if ($ability === 'sync:seller' && $normalizedType !== 'customer') {
+            throw new \RuntimeException('Tu rol actual no puede gestionar proveedores.');
+        }
+
+        if ($ability === null && ! $user?->canManageContactTypeInBusiness($business, $normalizedType)) {
             throw new \RuntimeException('Tu rol actual no puede gestionar proveedores.');
         }
     }

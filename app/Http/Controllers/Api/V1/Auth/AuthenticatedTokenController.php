@@ -45,7 +45,7 @@ class AuthenticatedTokenController extends Controller
     }
 
     /**
-     * Create a sync token only for business owners.
+     * Create a sync token only for business owners, scoped to the current business.
      */
     public function issueSyncToken(LoginRequest $request): JsonResponse
     {
@@ -72,13 +72,27 @@ class AuthenticatedTokenController extends Controller
         }
 
         $deviceName = $request->string('device_name')->toString();
+        $deviceUuid = $request->string('device_uuid')->toString() ?: null;
 
-        $user->tokens()->where('name', $deviceName)->delete();
-        $token = $user->createToken($deviceName)->plainTextToken;
+        // Revocar token anterior del mismo device para este business.
+        $user->tokens()
+            ->where('name', $deviceName)
+            ->where(function ($query) use ($business) {
+                $query->whereNull('business_id')->orWhere('business_id', $business->id);
+            })
+            ->delete();
+
+        $newAccessToken = $user->createToken($deviceName, ['sync:owner']);
+        $newAccessToken->accessToken->forceFill([
+            'business_id' => $business->id,
+            'device_uuid' => $deviceUuid,
+        ])->save();
 
         return response()->json([
-            'token' => $token,
+            'token' => $newAccessToken->plainTextToken,
             'token_type' => 'Bearer',
+            'abilities' => ['sync:owner'],
+            'business_id' => $business->id,
             'user' => UserResource::make($user),
         ]);
     }
