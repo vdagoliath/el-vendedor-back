@@ -5,19 +5,29 @@ namespace App\Http\Controllers\Api\V1\Sync;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Sync\PullSyncRequest;
 use App\Models\Business;
+use App\Models\Category;
+use App\Models\Contact;
 use App\Models\Device;
+use App\Models\Employee;
+use App\Models\Expense;
+use App\Models\PointOfSale;
 use App\Models\Product;
+use App\Models\Purchase;
+use App\Models\Sale;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
-use App\Models\SyncReceivedEvent;
+// SyncReceivedEvent ya no se usa en pull — todas las entidades están materializadas.
+use App\Models\UnitOfMeasure;
+use App\Models\Warehouse;
 use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\ContactPayloadNormalizer;
 use App\Support\Sync\SyncCompatibility;
+use App\Support\Sync\SyncCursor;
 use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
-use Throwable;
+// Throwable ya no se usa tras migrar a SyncCursor::parse.
 
 class SyncPullController extends Controller
 {
@@ -37,16 +47,25 @@ class SyncPullController extends Controller
         abort_unless($business instanceof Business, 409, 'No existe un negocio actual activo para sincronizar.');
 
         $device = $this->touchDevice($request, $business);
-        $requestedCursor = $this->parseCursor($request->string('cursor')->toString() ?: null);
+        $requestedCursor = SyncCursor::parse($request->string('cursor')->toString() ?: null);
         $responseBoundary = now();
         $limit = (int) ($request->integer('limit') ?: 500);
         $changes = $this->getBusinessProfileChanges($business, $requestedCursor, $responseBoundary)
             ->concat($this->getLicenseCatalogChanges($business, $requestedCursor, $responseBoundary))
             ->concat($this->getLicenseQuoteChanges($business, $responseBoundary))
-            ->concat($this->getEventChanges($business, $requestedCursor, $responseBoundary, $limit))
             ->concat($this->getProductChanges($business, $requestedCursor, $responseBoundary, $limit))
+            ->concat($this->getMaterializedEntityChanges(Category::class, 'categories', $business, $requestedCursor, $responseBoundary, $limit, fn (Category $m) => $this->toCategoryPayload($m)))
+            ->concat($this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $requestedCursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)))
+            ->concat($this->getMaterializedEntityChanges(Employee::class, 'employees', $business, $requestedCursor, $responseBoundary, $limit, fn (Employee $m) => $this->toEmployeePayload($m)))
+            ->concat($this->getMaterializedEntityChanges(UnitOfMeasure::class, 'units', $business, $requestedCursor, $responseBoundary, $limit, fn (UnitOfMeasure $m) => $this->toUnitPayload($m)))
+            ->concat($this->getMaterializedEntityChanges(Warehouse::class, 'warehouses', $business, $requestedCursor, $responseBoundary, $limit, fn (Warehouse $m) => $this->toWarehousePayload($m)))
+            ->concat($this->getMaterializedEntityChanges(PointOfSale::class, 'points_of_sale', $business, $requestedCursor, $responseBoundary, $limit, fn (PointOfSale $m) => $this->toPointOfSalePayload($m)))
+            ->concat($this->getSaleChanges($business, $requestedCursor, $responseBoundary, $limit))
+            ->concat($this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $requestedCursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)))
+            ->concat($this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $requestedCursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)))
             ->sortBy([
                 ['cursor_at', 'asc'],
+                ['cursor_id', 'asc'],
                 ['entity_type', 'asc'],
                 ['entity_id', 'asc'],
                 ['event_id', 'asc'],
@@ -55,9 +74,12 @@ class SyncPullController extends Controller
             ->values();
         $hasMore = $changes->count() > $limit;
         $visibleChanges = $hasMore ? $changes->take($limit)->values() : $changes->values();
-        $cursor = $hasMore
-            ? ($visibleChanges->last()['cursor_at'] ?? $responseBoundary->toIso8601String())
-            : $responseBoundary->toIso8601String();
+        if ($hasMore && $visibleChanges->isNotEmpty()) {
+            $last = $visibleChanges->last();
+            $cursor = ($last['cursor_at'] ?? $responseBoundary->toIso8601String()).'|'.((int) ($last['cursor_id'] ?? 0));
+        } else {
+            $cursor = $responseBoundary->toIso8601String().'|0';
+        }
         $conflicts = $this->getOpenConflicts($business, $requestedCursor);
 
         SyncCheckpoint::query()->updateOrCreate(
@@ -80,56 +102,12 @@ class SyncPullController extends Controller
                 ->all(),
             'conflicts' => $conflicts,
             'meta' => [
-                'requested_cursor' => $requestedCursor?->toIso8601String(),
+                'requested_cursor' => $requestedCursor?->toString(),
                 'device_id' => $device->id,
                 'applied_count' => $visibleChanges->count(),
                 'has_more' => $hasMore,
             ],
         ]);
-    }
-
-    /**
-     * Return incremental transaction deltas recorded via sync events.
-     *
-     * @return Collection<int, array<string, mixed>>
-     */
-    private function getEventChanges(
-        Business $business,
-        ?Carbon $requestedCursor,
-        CarbonInterface $responseBoundary,
-        int $limit
-    ): Collection {
-        $events = SyncReceivedEvent::query()
-            ->where('business_id', $business->id)
-            ->whereIn('entity_type', ['categories', 'contacts', 'providers', 'suppliers', 'vendors', 'customers', 'clients', 'employees', 'units', 'warehouses', 'points_of_sale', 'sales', 'purchases', 'expenses'])
-            ->where('status', 'applied')
-            ->where('updated_at', '<=', $responseBoundary)
-            ->when($requestedCursor, function ($query) use ($requestedCursor) {
-                $query->where('updated_at', '>', $requestedCursor);
-            })
-            ->orderBy('updated_at')
-            ->orderBy('id')
-            ->limit($limit + 1)
-            ->get();
-
-        return $events->map(function (SyncReceivedEvent $event): array {
-            $entityType = $this->contactPayloadNormalizer->normalizeEntityType($event->entity_type);
-            $payload = $event->payload ?? [];
-
-            if ($entityType === 'contacts' && is_array($payload)) {
-                $payload = $this->contactPayloadNormalizer->normalizePayload($payload);
-            }
-
-            return [
-                'event_id' => $event->event_id,
-                'entity_type' => $entityType,
-                'entity_id' => $event->entity_id,
-                'operation' => $event->operation,
-                'occurred_at' => ($event->occurred_at ?? $event->processed_at ?? $event->updated_at)?->toIso8601String(),
-                'cursor_at' => ($event->updated_at ?? $event->processed_at ?? $event->occurred_at)?->toIso8601String(),
-                'payload' => $payload,
-            ];
-        });
     }
 
     /**
@@ -139,16 +117,18 @@ class SyncPullController extends Controller
      */
     private function getBusinessProfileChanges(
         Business $business,
-        ?Carbon $requestedCursor,
+        ?SyncCursor $requestedCursor,
         CarbonInterface $responseBoundary
     ): Collection {
         if ($business->updated_at && $business->updated_at->greaterThan($responseBoundary)) {
             return collect();
         }
 
-        if ($requestedCursor && $business->updated_at && $business->updated_at->lessThanOrEqualTo($requestedCursor)) {
+        if ($requestedCursor?->updatedAt && $business->updated_at && $business->updated_at->lessThanOrEqualTo($requestedCursor->updatedAt)) {
             return collect();
         }
+
+        $updatedAt = $business->updated_at ?? $business->created_at ?? now();
 
         return collect([
             [
@@ -156,8 +136,9 @@ class SyncPullController extends Controller
                 'entity_type' => 'business_profile',
                 'entity_id' => 'current_business',
                 'operation' => 'upsert',
-                'occurred_at' => ($business->updated_at ?? $business->created_at ?? now())?->toIso8601String(),
-                'cursor_at' => ($business->updated_at ?? $business->created_at ?? now())?->toIso8601String(),
+                'occurred_at' => $updatedAt->toIso8601String(),
+                'cursor_at' => $updatedAt->toIso8601String(),
+                'cursor_id' => $business->id,
                 'payload' => $this->toBusinessProfilePayload($business),
             ],
         ]);
@@ -170,7 +151,7 @@ class SyncPullController extends Controller
      */
     private function getLicenseCatalogChanges(
         Business $business,
-        ?Carbon $requestedCursor,
+        ?SyncCursor $requestedCursor,
         CarbonInterface $responseBoundary
     ): Collection {
         $catalog = $this->pricingResolver->catalog();
@@ -184,7 +165,7 @@ class SyncPullController extends Controller
             return collect();
         }
 
-        if ($requestedCursor && $updatedAt->lessThanOrEqualTo($requestedCursor)) {
+        if ($requestedCursor?->updatedAt && $updatedAt->lessThanOrEqualTo($requestedCursor->updatedAt)) {
             return collect();
         }
 
@@ -196,6 +177,7 @@ class SyncPullController extends Controller
                 'operation' => 'upsert',
                 'occurred_at' => $updatedAt->toIso8601String(),
                 'cursor_at' => $updatedAt->toIso8601String(),
+                'cursor_id' => 0,
                 'payload' => $catalog,
             ],
         ]);
@@ -216,6 +198,7 @@ class SyncPullController extends Controller
                 'operation' => 'upsert',
                 'occurred_at' => $responseBoundary->toIso8601String(),
                 'cursor_at' => $responseBoundary->toIso8601String(),
+                'cursor_id' => 0,
                 'payload' => $this->pricingResolver->quote($business),
             ],
         ]);
@@ -248,19 +231,6 @@ class SyncPullController extends Controller
         return $device;
     }
 
-    private function parseCursor(?string $cursor): ?Carbon
-    {
-        if (! is_string($cursor) || trim($cursor) === '') {
-            return null;
-        }
-
-        try {
-            return Carbon::parse($cursor);
-        } catch (Throwable) {
-            return null;
-        }
-    }
-
     /**
      * Return incremental product deltas for the current business.
      *
@@ -268,17 +238,20 @@ class SyncPullController extends Controller
      */
     private function getProductChanges(
         Business $business,
-        ?Carbon $requestedCursor,
+        ?SyncCursor $requestedCursor,
         CarbonInterface $responseBoundary,
         int $limit
     ): Collection {
-        $products = Product::query()
+        $query = Product::query()
             ->withTrashed()
             ->where('business_id', $business->id)
-            ->where('updated_at', '<=', $responseBoundary)
-            ->when($requestedCursor, function ($query) use ($requestedCursor) {
-                $query->where('updated_at', '>', $requestedCursor);
-            })
+            ->where('updated_at', '<=', $responseBoundary);
+
+        if ($requestedCursor) {
+            $requestedCursor->applyFilter($query);
+        }
+
+        $products = $query
             ->orderBy('updated_at')
             ->orderBy('id')
             ->limit($limit + 1)
@@ -295,6 +268,7 @@ class SyncPullController extends Controller
                 'operation' => $product->deleted_at ? 'delete' : 'upsert',
                 'occurred_at' => $occurredAt?->toIso8601String(),
                 'cursor_at' => ($product->updated_at ?? $occurredAt ?? $product->created_at)?->toIso8601String(),
+                'cursor_id' => $product->id,
                 'payload' => $this->toProductPayload($product),
             ];
         });
@@ -308,7 +282,7 @@ class SyncPullController extends Controller
      */
     private function stripCursorMetadata(array $change): array
     {
-        unset($change['cursor_at']);
+        unset($change['cursor_at'], $change['cursor_id']);
 
         return $change;
     }
@@ -318,13 +292,13 @@ class SyncPullController extends Controller
      *
      * @return array<int, array<string, mixed>>
      */
-    private function getOpenConflicts(Business $business, ?Carbon $requestedCursor): array
+    private function getOpenConflicts(Business $business, ?SyncCursor $requestedCursor): array
     {
         return SyncConflict::query()
             ->where('business_id', $business->id)
             ->where('status', 'open')
-            ->when($requestedCursor, function ($query) use ($requestedCursor) {
-                $query->where('updated_at', '>', $requestedCursor);
+            ->when($requestedCursor?->updatedAt, function ($query) use ($requestedCursor) {
+                $query->where('updated_at', '>', $requestedCursor->updatedAt);
             })
             ->orderByDesc('updated_at')
             ->limit(100)
@@ -382,6 +356,246 @@ class SyncPullController extends Controller
             'phone' => $business->phone,
             'defaultCurrency' => $business->default_currency ?? 'CUP',
             'licenseExpiresAt' => $business->license_expires_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Generic pull for any materialized entity with (business_id, external_id, updated_at) pattern.
+     *
+     * @param  class-string  $modelClass
+     * @param  callable  $toPayload
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function getMaterializedEntityChanges(
+        string $modelClass,
+        string $entityType,
+        Business $business,
+        ?SyncCursor $requestedCursor,
+        CarbonInterface $responseBoundary,
+        int $limit,
+        callable $toPayload
+    ): Collection {
+        $query = $modelClass::query()
+            ->withTrashed()
+            ->where('business_id', $business->id)
+            ->where('updated_at', '<=', $responseBoundary);
+
+        if ($requestedCursor) {
+            $requestedCursor->applyFilter($query);
+        }
+
+        $records = $query
+            ->orderBy('updated_at')
+            ->orderBy('id')
+            ->limit($limit + 1)
+            ->get();
+
+        return $records->map(function ($record) use ($entityType, $toPayload): array {
+            $occurredAt = $record->source_updated_at ?? $record->updated_at ?? $record->created_at;
+
+            return [
+                'event_id' => $record->last_received_event_id
+                    ?? "server:{$entityType}:{$record->external_id}:{$record->updated_at?->timestamp}",
+                'entity_type' => $entityType,
+                'entity_id' => $record->external_id,
+                'operation' => $record->deleted_at ? 'delete' : 'upsert',
+                'occurred_at' => $occurredAt?->toIso8601String(),
+                'cursor_at' => ($record->updated_at ?? $occurredAt ?? $record->created_at)?->toIso8601String(),
+                'cursor_id' => $record->id,
+                'payload' => $toPayload($record),
+            ];
+        });
+    }
+
+    /** @return array<string, mixed> */
+    private function toCategoryPayload(Category $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'name' => $m->name,
+            'description' => $m->description,
+            'code' => $m->code,
+            'color' => $m->color,
+            'icon' => $m->icon,
+            'parentId' => $m->parent_external_id,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toContactPayload(Contact $m): array
+    {
+        return [
+            'name' => $m->name,
+            'mobile' => $m->mobile,
+            'email' => $m->email,
+            'idCard' => $m->id_card,
+            'type' => $m->type,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toEmployeePayload(Employee $m): array
+    {
+        return [
+            'name' => $m->name,
+            'mobile' => $m->mobile,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toUnitPayload(UnitOfMeasure $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'name' => $m->name,
+            'symbol' => $m->symbol,
+            'category' => $m->category,
+            'ratio' => (float) $m->ratio,
+            'is_reference' => $m->is_reference,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toWarehousePayload(Warehouse $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'name' => $m->name,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toPointOfSalePayload(PointOfSale $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'name' => $m->name,
+            'warehouseId' => $m->warehouse_external_id,
+            'employees' => $m->employees ?? [],
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Sales need eager-loaded lines, so they use a dedicated pull method instead of the generic one.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function getSaleChanges(
+        Business $business,
+        ?SyncCursor $requestedCursor,
+        CarbonInterface $responseBoundary,
+        int $limit
+    ): Collection {
+        $query = Sale::query()
+            ->withTrashed()
+            ->with('lines')
+            ->where('business_id', $business->id)
+            ->where('updated_at', '<=', $responseBoundary);
+
+        if ($requestedCursor) {
+            $requestedCursor->applyFilter($query);
+        }
+
+        $sales = $query
+            ->orderBy('updated_at')
+            ->orderBy('id')
+            ->limit($limit + 1)
+            ->get();
+
+        return $sales->map(function (Sale $sale): array {
+            $occurredAt = $sale->source_updated_at ?? $sale->updated_at ?? $sale->created_at;
+
+            return [
+                'event_id' => $sale->last_received_event_id
+                    ?? "server:sales:{$sale->external_id}:{$sale->updated_at?->timestamp}",
+                'entity_type' => 'sales',
+                'entity_id' => $sale->external_id,
+                'operation' => $sale->deleted_at ? 'delete' : 'upsert',
+                'occurred_at' => $occurredAt?->toIso8601String(),
+                'cursor_at' => ($sale->updated_at ?? $occurredAt ?? $sale->created_at)?->toIso8601String(),
+                'cursor_id' => $sale->id,
+                'payload' => $this->toSalePayload($sale),
+            ];
+        });
+    }
+
+    /** @return array<string, mixed> */
+    private function toSalePayload(Sale $s): array
+    {
+        return [
+            'type' => 'sale',
+            'reference' => $s->reference,
+            'contact' => $s->contact_external_id,
+            'pos' => $s->pos_external_id,
+            'posId' => $s->pos_external_id,
+            'warehouseId' => $s->warehouse_external_id,
+            'cashRegisterSessionId' => $s->cash_register_session_id,
+            'lines' => $s->lines->map(fn ($l) => [
+                'productId' => $l->product_external_id,
+                'productTitle' => $l->product_title,
+                'price' => (float) $l->price,
+                'amount' => (float) $l->amount,
+                'subTotal' => (float) $l->sub_total,
+            ])->all(),
+            'inventoryConsumption' => $s->inventory_consumption ?? [],
+            'dateTime' => $s->transaction_at?->toIso8601String(),
+            'total' => (float) $s->total,
+            'status' => $s->status,
+            'currency' => $s->currency,
+            'paymentMethod' => $s->payment_method,
+            'amountReceived' => $s->amount_received !== null ? (float) $s->amount_received : null,
+            'change' => $s->change_amount !== null ? (float) $s->change_amount : null,
+            'cashBreakdown' => $s->cash_breakdown ?? [],
+            'cardPaymentDetails' => $s->card_payment_details,
+            'createdBy' => $s->created_by,
+            'saleIdImport' => $s->sale_id_import,
+            'itemsImported' => $s->items_imported ?? [],
+            'deleted_at' => $s->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toPurchasePayload(Purchase $p): array
+    {
+        $lines = $p->relationLoaded('lines') ? $p->lines : $p->lines()->orderBy('sort_order')->get();
+
+        return [
+            'type' => 'purchase',
+            'reference' => $p->reference,
+            'contact' => $p->contact_external_id,
+            'warehouseId' => $p->warehouse_external_id,
+            'lines' => $lines->map(fn ($l) => [
+                'productId' => $l->product_external_id,
+                'productTitle' => $l->product_title,
+                'price' => (float) $l->price,
+                'amount' => (float) $l->amount,
+                'subTotal' => (float) $l->sub_total,
+            ])->all(),
+            'inventoryConsumption' => $p->inventory_consumption ?? [],
+            'dateTime' => $p->transaction_at?->toIso8601String(),
+            'total' => (float) $p->total,
+            'status' => $p->status,
+            'currency' => $p->currency,
+            'createdBy' => $p->created_by,
+            'deleted_at' => $p->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toExpensePayload(Expense $e): array
+    {
+        return [
+            'date' => $e->expense_date?->toIso8601String(),
+            'description' => $e->description,
+            'amount' => (float) $e->amount,
+            'category' => $e->category,
+            'deleted_at' => $e->deleted_at?->toIso8601String(),
         ];
     }
 }

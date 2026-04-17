@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
 use App\Http\Controllers\Api\V1\Auth\RegisteredUserController;
 use App\Http\Controllers\Api\V1\Auth\SellerInvitationController;
 use App\Http\Controllers\Api\V1\Sync\SyncBootstrapController;
+use App\Http\Controllers\Api\V1\Sync\SyncConflictController;
 use App\Http\Controllers\Api\V1\Sync\SyncPullController;
 use App\Http\Controllers\Api\V1\Sync\SyncPushController;
 use Illuminate\Support\Facades\Route;
@@ -53,5 +54,8 @@ Route::prefix('v1')
                 Route::get('bootstrap', [SyncBootstrapController::class, 'show'])->name('bootstrap');
                 Route::get('pull', [SyncPullController::class, 'index'])->name('pull');
                 Route::post('push', [SyncPushController::class, 'store'])->name('push');
+                Route::post('conflicts/{conflict}/resolve', [SyncConflictController::class, 'resolve'])
+                    ->whereNumber('conflict')
+                    ->name('conflicts.resolve');
             });
     });

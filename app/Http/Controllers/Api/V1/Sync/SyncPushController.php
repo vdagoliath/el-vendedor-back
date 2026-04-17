@@ -13,6 +13,8 @@ use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
 use App\Support\Sync\ContactPayloadNormalizer;
 use App\Support\Sync\SyncCompatibility;
+use App\Support\Sync\SyncEntityApplier;
+use App\Support\Sync\SyncTransactionApplier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Throwable;
@@ -39,7 +41,9 @@ class SyncPushController extends Controller
 
     public function __construct(
         private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
-        private readonly SyncCompatibility $syncCompatibility
+        private readonly SyncCompatibility $syncCompatibility,
+        private readonly SyncEntityApplier $entityApplier,
+        private readonly SyncTransactionApplier $transactionApplier
     ) {}
 
     /**
@@ -301,7 +305,13 @@ class SyncPushController extends Controller
             return 'applied';
         }
 
-        if (in_array($change['entity_type'], ['categories', 'employees', 'units', 'warehouses', 'points_of_sale', 'sales', 'purchases', 'expenses'], true)) {
+        // Materializar entidades simples en tablas dedicadas
+        if ($this->entityApplier->apply($business, $event, $change)) {
+            return 'applied';
+        }
+
+        // Materializar transacciones (sales, purchases, expenses)
+        if ($this->transactionApplier->apply($business, $event, $change)) {
             return 'applied';
         }
 

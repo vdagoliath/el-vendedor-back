@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Sync;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Sync\PushSyncRequest;
 use App\Models\Business;
 use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\SyncCompatibility;
@@ -64,7 +65,7 @@ class SyncBootstrapController extends Controller
                 'inventory_events',
             ],
             'push_contract' => [
-                'max_batch_size' => 1000,
+                'max_batch_size' => PushSyncRequest::MAX_BATCH_SIZE,
                 'operations' => ['create', 'update', 'delete', 'upsert'],
             ],
             'pull_contract' => [
