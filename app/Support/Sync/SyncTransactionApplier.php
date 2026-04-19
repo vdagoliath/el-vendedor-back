@@ -67,6 +67,10 @@ class SyncTransactionApplier
             'external_id' => $entityId,
             'reference' => $this->nullStr($payload['reference'] ?? null),
             'contact_external_id' => $this->nullStr($payload['contact'] ?? null),
+            'contact_snapshot' => $this->normalizeContactSnapshot(
+                $payload['contactSnapshot'] ?? null,
+                $sale->contact_snapshot
+            ),
             'pos_external_id' => $this->nullStr($payload['posId'] ?? $payload['pos'] ?? null),
             'warehouse_external_id' => $this->nullStr($payload['warehouseId'] ?? null),
             'cash_register_session_id' => $this->nullStr($payload['cashRegisterSessionId'] ?? null),
@@ -276,5 +280,29 @@ class SyncTransactionApplier
     private function decimal(mixed $value): float
     {
         return is_numeric($value) ? (float) $value : 0.0;
+    }
+
+    /**
+     * Normalize the customer snapshot pushed by clients so it always has the
+     * same shape downstream. Falls back to the previously stored snapshot when
+     * the incoming payload omits it (avoids losing context on partial updates).
+     *
+     * @return array<string, string|null>|null
+     */
+    private function normalizeContactSnapshot(mixed $incoming, mixed $existing): ?array
+    {
+        if (! is_array($incoming)) {
+            return is_array($existing) ? $existing : null;
+        }
+
+        $snapshot = [
+            'name' => $this->nullStr($incoming['name'] ?? null),
+            'mobile' => $this->nullStr($incoming['mobile'] ?? null),
+            'idCard' => $this->nullStr($incoming['idCard'] ?? $incoming['id_card'] ?? null),
+        ];
+
+        $hasAny = array_filter($snapshot, static fn (mixed $value): bool => $value !== null);
+
+        return $hasAny ? $snapshot : (is_array($existing) ? $existing : null);
     }
 }

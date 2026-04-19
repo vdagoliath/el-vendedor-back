@@ -530,8 +530,13 @@ class SyncPullController extends Controller
             ->limit($limit + 1)
             ->get();
 
-        return $sales->map(function (Sale $sale): array {
+        $contactsByExternalId = $this->loadContactsForSales($business, $sales);
+
+        return $sales->map(function (Sale $sale) use ($contactsByExternalId): array {
             $occurredAt = $sale->source_updated_at ?? $sale->updated_at ?? $sale->created_at;
+            $linkedContact = $sale->contact_external_id
+                ? ($contactsByExternalId[$sale->contact_external_id] ?? null)
+                : null;
 
             return [
                 'event_id' => $sale->last_received_event_id
@@ -542,18 +547,95 @@ class SyncPullController extends Controller
                 'occurred_at' => $occurredAt?->toIso8601String(),
                 'cursor_at' => ($sale->updated_at ?? $occurredAt ?? $sale->created_at)?->toIso8601String(),
                 'cursor_id' => $sale->id,
-                'payload' => $this->toSalePayload($sale),
+                'payload' => $this->toSalePayload($sale, $linkedContact),
             ];
         });
     }
 
+    /**
+     * Resolve customer snapshots for a batch of sales using the live contacts table
+     * as the source of truth. The persisted snapshot on the sale is the fallback.
+     *
+     * @param  Collection<int, Sale>  $sales
+     * @return array<string, Contact>
+     */
+    private function loadContactsForSales(Business $business, Collection $sales): array
+    {
+        $externalIds = $sales
+            ->pluck('contact_external_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($externalIds)) {
+            return [];
+        }
+
+        return Contact::query()
+            ->where('business_id', $business->id)
+            ->whereIn('external_id', $externalIds)
+            ->get()
+            ->keyBy('external_id')
+            ->all();
+    }
+
+    /**
+     * Build the snapshot the client uses to identify the debtor even when the
+     * contact record itself has not been ingested locally yet. We prefer the
+     * live contact data, then the snapshot persisted at push time.
+     *
+     * @return array<string, string|null>|null
+     */
+    private function buildContactSnapshotForSale(Sale $sale, ?Contact $linkedContact): ?array
+    {
+        if ($linkedContact instanceof Contact) {
+            $name = trim((string) ($linkedContact->name ?? ''));
+            $mobile = $this->trimOrNull($linkedContact->mobile);
+            $idCard = $this->trimOrNull($linkedContact->id_card);
+
+            if ($name !== '' || $mobile !== null || $idCard !== null) {
+                return [
+                    'name' => $name !== '' ? $name : null,
+                    'mobile' => $mobile,
+                    'idCard' => $idCard,
+                ];
+            }
+        }
+
+        $persisted = $sale->contact_snapshot;
+        if (is_array($persisted)) {
+            $hasAny = array_filter($persisted, static fn (mixed $value): bool => $value !== null && $value !== '');
+
+            return $hasAny ? [
+                'name' => $persisted['name'] ?? null,
+                'mobile' => $persisted['mobile'] ?? null,
+                'idCard' => $persisted['idCard'] ?? $persisted['id_card'] ?? null,
+            ] : null;
+        }
+
+        return null;
+    }
+
+    private function trimOrNull(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
     /** @return array<string, mixed> */
-    private function toSalePayload(Sale $s): array
+    private function toSalePayload(Sale $s, ?Contact $linkedContact = null): array
     {
         return [
             'type' => 'sale',
             'reference' => $s->reference,
             'contact' => $s->contact_external_id,
+            'contactSnapshot' => $this->buildContactSnapshotForSale($s, $linkedContact),
             'pos' => $s->pos_external_id,
             'posId' => $s->pos_external_id,
             'warehouseId' => $s->warehouse_external_id,
