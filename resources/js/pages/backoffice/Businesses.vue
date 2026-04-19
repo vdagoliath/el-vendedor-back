@@ -347,7 +347,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         :id="`current-name-${currentBusiness.id}`"
                                         name="name"
                                         required
-                                        :value="currentBusiness.name"
+                                        :default-value="currentBusiness.name"
                                     />
                                     <InputError :message="errors.name" />
                                 </div>
@@ -357,7 +357,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     <Input
                                         :id="`current-slug-${currentBusiness.id}`"
                                         name="slug"
-                                        :value="currentBusiness.slug"
+                                        :default-value="currentBusiness.slug"
                                     />
                                     <InputError :message="errors.slug" />
                                 </div>
@@ -367,7 +367,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     <Input
                                         :id="`current-address-${currentBusiness.id}`"
                                         name="address"
-                                        :value="currentBusiness.address ?? ''"
+                                        :default-value="currentBusiness.address ?? ''"
                                         placeholder="Calle 10 #123 entre A y B"
                                     />
                                     <InputError :message="errors.address" />
@@ -378,7 +378,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     <Input
                                         :id="`current-phone-${currentBusiness.id}`"
                                         name="phone"
-                                        :value="currentBusiness.phone ?? ''"
+                                        :default-value="currentBusiness.phone ?? ''"
                                         placeholder="+53 55555555"
                                     />
                                     <InputError :message="errors.phone" />
@@ -390,7 +390,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         :id="`current-currency-${currentBusiness.id}`"
                                         name="default_currency"
                                         required
-                                        :value="currentBusiness.default_currency"
+                                        :default-value="currentBusiness.default_currency"
                                         placeholder="CUP"
                                     />
                                     <InputError :message="errors.default_currency" />
@@ -460,7 +460,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         name="active_pos_operation_window_days"
                                         type="number"
                                         min="1"
-                                        :value="licensePricing.config.active_pos_operation_window_days"
+                                        :default-value="licensePricing.config.active_pos_operation_window_days"
                                     />
                                     <InputError :message="errors.active_pos_operation_window_days" />
                                 </div>
@@ -484,39 +484,39 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <div class="grid gap-4 md:grid-cols-2">
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-name-${rule.id}`">Nombre</Label>
-                                                <Input :id="`rule-name-${rule.id}`" name="name" :value="rule.name" />
+                                                <Input :id="`rule-name-${rule.id}`" name="name" :default-value="rule.name" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-currency-${rule.id}`">Moneda</Label>
-                                                <Input :id="`rule-currency-${rule.id}`" name="currency" :value="rule.currency" />
+                                                <Input :id="`rule-currency-${rule.id}`" name="currency" :default-value="rule.currency" />
                                             </div>
                                             <div class="grid gap-2 md:col-span-2">
                                                 <Label :for="`rule-description-${rule.id}`">Descripción</Label>
-                                                <Input :id="`rule-description-${rule.id}`" name="description" :value="rule.description ?? ''" />
+                                                <Input :id="`rule-description-${rule.id}`" name="description" :default-value="rule.description ?? ''" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-price-${rule.id}`">Precio mensual</Label>
-                                                <Input :id="`rule-price-${rule.id}`" name="monthly_price" type="number" step="0.01" min="0" :value="rule.monthly_price" />
+                                                <Input :id="`rule-price-${rule.id}`" name="monthly_price" type="number" step="0.01" min="0" :default-value="rule.monthly_price" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-sort-${rule.id}`">Orden</Label>
-                                                <Input :id="`rule-sort-${rule.id}`" name="sort_order" type="number" min="0" :value="rule.sort_order" />
+                                                <Input :id="`rule-sort-${rule.id}`" name="sort_order" type="number" min="0" :default-value="rule.sort_order" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-min-pos-${rule.id}`">POS activos mínimo</Label>
-                                                <Input :id="`rule-min-pos-${rule.id}`" name="min_active_pos" type="number" min="0" :value="rule.min_active_pos" />
+                                                <Input :id="`rule-min-pos-${rule.id}`" name="min_active_pos" type="number" min="0" :default-value="rule.min_active_pos" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-max-pos-${rule.id}`">POS activos máximo</Label>
-                                                <Input :id="`rule-max-pos-${rule.id}`" name="max_active_pos" type="number" min="0" :value="rule.max_active_pos ?? ''" />
+                                                <Input :id="`rule-max-pos-${rule.id}`" name="max_active_pos" type="number" min="0" :default-value="rule.max_active_pos ?? ''" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-min-owners-${rule.id}`">Dueños activos mínimo</Label>
-                                                <Input :id="`rule-min-owners-${rule.id}`" name="min_active_owners" type="number" min="0" :value="rule.min_active_owners ?? ''" />
+                                                <Input :id="`rule-min-owners-${rule.id}`" name="min_active_owners" type="number" min="0" :default-value="rule.min_active_owners ?? ''" />
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`rule-max-owners-${rule.id}`">Dueños activos máximo</Label>
-                                                <Input :id="`rule-max-owners-${rule.id}`" name="max_active_owners" type="number" min="0" :value="rule.max_active_owners ?? ''" />
+                                                <Input :id="`rule-max-owners-${rule.id}`" name="max_active_owners" type="number" min="0" :default-value="rule.max_active_owners ?? ''" />
                                             </div>
                                         </div>
 
