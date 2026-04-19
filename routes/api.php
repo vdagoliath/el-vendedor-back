@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\Auth\AuthenticatedUserController;
 use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
 use App\Http\Controllers\Api\V1\Auth\RegisteredUserController;
 use App\Http\Controllers\Api\V1\Auth\SellerInvitationController;
+use App\Http\Controllers\Api\V1\CashRegister\CashRegisterSessionController;
 use App\Http\Controllers\Api\V1\Sync\SyncBootstrapController;
 use App\Http\Controllers\Api\V1\Sync\SyncConflictController;
 use App\Http\Controllers\Api\V1\Sync\SyncPullController;
@@ -57,5 +58,19 @@ Route::prefix('v1')
                 Route::post('conflicts/{conflict}/resolve', [SyncConflictController::class, 'resolve'])
                     ->whereNumber('conflict')
                     ->name('conflicts.resolve');
+            });
+
+        Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])
+            ->prefix('cash-register')
+            ->name('cash-register.')
+            ->group(function (): void {
+                Route::get('pos/{posExternalId}/active-session', [CashRegisterSessionController::class, 'active'])
+                    ->name('pos.active-session');
+                Route::post('pos/{posExternalId}/open-session', [CashRegisterSessionController::class, 'open'])
+                    ->name('pos.open-session');
+                Route::post('sessions/{externalId}/close', [CashRegisterSessionController::class, 'close'])
+                    ->name('sessions.close');
+                Route::get('sessions/{externalId}/summary', [CashRegisterSessionController::class, 'summary'])
+                    ->name('sessions.summary');
             });
     });

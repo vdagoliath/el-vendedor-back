@@ -37,6 +37,7 @@ class SyncPushController extends Controller
         'expenses',
         'license_catalog',
         'license_quote',
+        'cash_register_sessions',
     ];
 
     public function __construct(

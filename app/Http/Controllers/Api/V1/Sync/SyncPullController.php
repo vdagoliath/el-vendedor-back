@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Sync;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Sync\PullSyncRequest;
 use App\Models\Business;
+use App\Models\CashRegisterSession;
 use App\Models\Category;
 use App\Models\Contact;
 use App\Models\Device;
@@ -27,6 +28,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+
 // Throwable ya no se usa tras migrar a SyncCursor::parse.
 
 class SyncPullController extends Controller
@@ -60,6 +62,7 @@ class SyncPullController extends Controller
             ->concat($this->getMaterializedEntityChanges(UnitOfMeasure::class, 'units', $business, $requestedCursor, $responseBoundary, $limit, fn (UnitOfMeasure $m) => $this->toUnitPayload($m)))
             ->concat($this->getMaterializedEntityChanges(Warehouse::class, 'warehouses', $business, $requestedCursor, $responseBoundary, $limit, fn (Warehouse $m) => $this->toWarehousePayload($m)))
             ->concat($this->getMaterializedEntityChanges(PointOfSale::class, 'points_of_sale', $business, $requestedCursor, $responseBoundary, $limit, fn (PointOfSale $m) => $this->toPointOfSalePayload($m)))
+            ->concat($this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $requestedCursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)))
             ->concat($this->getSaleChanges($business, $requestedCursor, $responseBoundary, $limit))
             ->concat($this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $requestedCursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)))
             ->concat($this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $requestedCursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)))
@@ -363,7 +366,6 @@ class SyncPullController extends Controller
      * Generic pull for any materialized entity with (business_id, external_id, updated_at) pattern.
      *
      * @param  class-string  $modelClass
-     * @param  callable  $toPayload
      * @return Collection<int, array<string, mixed>>
      */
     private function getMaterializedEntityChanges(
@@ -477,6 +479,26 @@ class SyncPullController extends Controller
             'name' => $m->name,
             'warehouseId' => $m->warehouse_external_id,
             'employees' => $m->employees ?? [],
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toCashRegisterSessionPayload(CashRegisterSession $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'posId' => $m->pos_external_id,
+            'warehouseId' => $m->warehouse_external_id,
+            'status' => $m->status,
+            'opened_at' => $m->opened_at?->toIso8601String(),
+            'closed_at' => $m->closed_at?->toIso8601String(),
+            'opening_balance' => $m->opening_balance !== null ? (float) $m->opening_balance : 0.0,
+            'closing_balance' => $m->closing_balance !== null ? (float) $m->closing_balance : null,
+            'opened_by' => $m->opened_by,
+            'closed_by' => $m->closed_by,
+            'initial_inventory_snapshot' => $m->initial_inventory_snapshot,
+            'final_inventory_snapshot' => $m->final_inventory_snapshot,
             'deleted_at' => $m->deleted_at?->toIso8601String(),
         ];
     }
