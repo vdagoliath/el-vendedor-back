@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
 use App\Http\Controllers\Api\V1\Auth\RegisteredUserController;
 use App\Http\Controllers\Api\V1\Auth\SellerInvitationController;
 use App\Http\Controllers\Api\V1\CashRegister\CashRegisterSessionController;
+use App\Http\Controllers\Api\V1\Sync\ReprocessFailedEventsController;
 use App\Http\Controllers\Api\V1\Sync\SyncBootstrapController;
 use App\Http\Controllers\Api\V1\Sync\SyncConflictController;
 use App\Http\Controllers\Api\V1\Sync\SyncPullController;
@@ -58,6 +59,19 @@ Route::prefix('v1')
                 Route::post('conflicts/{conflict}/resolve', [SyncConflictController::class, 'resolve'])
                     ->whereNumber('conflict')
                     ->name('conflicts.resolve');
+            });
+
+        // Endpoint administrativo: reprocesa eventos estancados en status `failed`.
+        // Restringido al owner porque implica re-materializar datos en tablas
+        // compartidas del negocio (products, sales, etc.).
+        Route::middleware(['auth:sanctum', 'ability:sync:owner', 'current.business'])
+            ->prefix('sync')
+            ->name('sync.')
+            ->group(function (): void {
+                Route::get('failed-events', [ReprocessFailedEventsController::class, 'summary'])
+                    ->name('failed-events.summary');
+                Route::post('reprocess-failed-events', [ReprocessFailedEventsController::class, 'store'])
+                    ->name('failed-events.reprocess');
             });
 
         Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])

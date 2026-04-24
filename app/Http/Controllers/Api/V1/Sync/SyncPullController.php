@@ -24,6 +24,7 @@ use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\ContactPayloadNormalizer;
 use App\Support\Sync\SyncCompatibility;
 use App\Support\Sync\SyncCursor;
+use App\Support\Sync\SyncEntityCursorBundle;
 use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
@@ -40,7 +41,34 @@ class SyncPullController extends Controller
     ) {}
 
     /**
+     * Fixed order used to drain entities serially. Keeping dependencies (e.g.
+     * contacts before sales) earlier avoids foreign-key-style gaps on the
+     * client while it materializes changes.
+     *
+     * @var array<int, string>
+     */
+    private const ENTITY_ORDER = [
+        'business_profile',
+        'license_catalog',
+        'categories',
+        'units',
+        'employees',
+        'warehouses',
+        'points_of_sale',
+        'cash_register_sessions',
+        'contacts',
+        'products',
+        'sales',
+        'purchases',
+        'expenses',
+    ];
+
+    /**
      * Return remote changes since the provided cursor.
+     *
+     * The pull drains one entity_type per request following a fixed order.
+     * Each entity_type carries its own sub-cursor in the returned bundle so
+     * table-local ids never bleed into the filters of other tables.
      */
     public function index(PullSyncRequest $request): JsonResponse
     {
@@ -49,41 +77,74 @@ class SyncPullController extends Controller
         abort_unless($business instanceof Business, 409, 'No existe un negocio actual activo para sincronizar.');
 
         $device = $this->touchDevice($request, $business);
-        $requestedCursor = SyncCursor::parse($request->string('cursor')->toString() ?: null);
+        $rawCursor = $request->string('cursor')->toString() ?: null;
+        $bundle = SyncEntityCursorBundle::parse($rawCursor);
         $responseBoundary = now();
         $limit = (int) ($request->integer('limit') ?: 500);
-        $changes = $this->getBusinessProfileChanges($business, $requestedCursor, $responseBoundary)
-            ->concat($this->getLicenseCatalogChanges($business, $requestedCursor, $responseBoundary))
-            ->concat($this->getLicenseQuoteChanges($business, $responseBoundary))
-            ->concat($this->getProductChanges($business, $requestedCursor, $responseBoundary, $limit))
-            ->concat($this->getMaterializedEntityChanges(Category::class, 'categories', $business, $requestedCursor, $responseBoundary, $limit, fn (Category $m) => $this->toCategoryPayload($m)))
-            ->concat($this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $requestedCursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)))
-            ->concat($this->getMaterializedEntityChanges(Employee::class, 'employees', $business, $requestedCursor, $responseBoundary, $limit, fn (Employee $m) => $this->toEmployeePayload($m)))
-            ->concat($this->getMaterializedEntityChanges(UnitOfMeasure::class, 'units', $business, $requestedCursor, $responseBoundary, $limit, fn (UnitOfMeasure $m) => $this->toUnitPayload($m)))
-            ->concat($this->getMaterializedEntityChanges(Warehouse::class, 'warehouses', $business, $requestedCursor, $responseBoundary, $limit, fn (Warehouse $m) => $this->toWarehousePayload($m)))
-            ->concat($this->getMaterializedEntityChanges(PointOfSale::class, 'points_of_sale', $business, $requestedCursor, $responseBoundary, $limit, fn (PointOfSale $m) => $this->toPointOfSalePayload($m)))
-            ->concat($this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $requestedCursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)))
-            ->concat($this->getSaleChanges($business, $requestedCursor, $responseBoundary, $limit))
-            ->concat($this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $requestedCursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)))
-            ->concat($this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $requestedCursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)))
-            ->sortBy([
-                ['cursor_at', 'asc'],
-                ['cursor_id', 'asc'],
-                ['entity_type', 'asc'],
-                ['entity_id', 'asc'],
-                ['event_id', 'asc'],
-            ])
-            ->take($limit + 1)
-            ->values();
-        $hasMore = $changes->count() > $limit;
-        $visibleChanges = $hasMore ? $changes->take($limit)->values() : $changes->values();
-        if ($hasMore && $visibleChanges->isNotEmpty()) {
-            $last = $visibleChanges->last();
-            $cursor = ($last['cursor_at'] ?? $responseBoundary->toIso8601String()).'|'.((int) ($last['cursor_id'] ?? 0));
-        } else {
-            $cursor = $responseBoundary->toIso8601String().'|0';
+        if ($limit < 1) {
+            $limit = 500;
         }
-        $conflicts = $this->getOpenConflicts($business, $requestedCursor);
+
+        $visibleChanges = collect();
+        $remainingBudget = $limit;
+        $hasMore = false;
+        $servedEntities = [];
+
+        foreach (self::ENTITY_ORDER as $entityType) {
+            if ($remainingBudget <= 0) {
+                // Llenamos el cupo del lote; puede haber más en entidades no visitadas.
+                $hasMore = true;
+                break;
+            }
+
+            $cursor = $bundle->cursorFor($entityType);
+            // Pedimos budget+1 para saber si la entidad tiene más que el cupo restante
+            // sin tener que volver a consultarla en esta misma iteración.
+            $entityChanges = $this->fetchEntityChanges(
+                $entityType,
+                $business,
+                $cursor,
+                $responseBoundary,
+                $remainingBudget + 1
+            );
+
+            if ($entityChanges->isEmpty()) {
+                $bundle = $bundle->withAdvance($entityType, $responseBoundary, 0);
+
+                continue;
+            }
+
+            $entityHasMore = $entityChanges->count() > $remainingBudget;
+            $slice = $entityHasMore
+                ? $entityChanges->take($remainingBudget)->values()
+                : $entityChanges->values();
+
+            $visibleChanges = $visibleChanges->concat($slice)->values();
+            $servedEntities[] = $entityType;
+
+            $last = $slice->last();
+            $lastCursorAt = isset($last['cursor_at']) ? Carbon::parse((string) $last['cursor_at']) : $responseBoundary;
+            $lastCursorId = (int) ($last['cursor_id'] ?? 0);
+            $bundle = $bundle->withAdvance($entityType, $lastCursorAt, $lastCursorId);
+
+            $remainingBudget -= $slice->count();
+
+            if ($entityHasMore) {
+                $hasMore = true;
+                break;
+            }
+        }
+
+        // license_quote stays out of the serial drain: it is emitted inline with
+        // every response so the client always sees a fresh quote without blocking
+        // other entities on a singleton that has no real cursor.
+        $licenseQuoteChanges = $this->getLicenseQuoteChanges($business, $responseBoundary);
+        if ($licenseQuoteChanges->isNotEmpty()) {
+            $visibleChanges = $visibleChanges->concat($licenseQuoteChanges)->values();
+        }
+
+        $cursor = $bundle->toString();
+        $conflicts = $this->getOpenConflicts($business, $bundle);
 
         SyncCheckpoint::query()->updateOrCreate(
             [
@@ -105,12 +166,47 @@ class SyncPullController extends Controller
                 ->all(),
             'conflicts' => $conflicts,
             'meta' => [
-                'requested_cursor' => $requestedCursor?->toString(),
+                'requested_cursor' => $rawCursor,
                 'device_id' => $device->id,
                 'applied_count' => $visibleChanges->count(),
                 'has_more' => $hasMore,
+                // Mantenemos la clave singular por backcompat con clientes/tests
+                // previos; apunta a la última entidad servida en este lote.
+                'served_entity' => empty($servedEntities) ? null : end($servedEntities),
+                'served_entities' => $servedEntities,
+                'cursor_format' => 'v2-serial',
             ],
         ]);
+    }
+
+    /**
+     * Pull the next page for a single entity_type using its own sub-cursor.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function fetchEntityChanges(
+        string $entityType,
+        Business $business,
+        ?SyncCursor $cursor,
+        CarbonInterface $responseBoundary,
+        int $limit
+    ): Collection {
+        return match ($entityType) {
+            'business_profile' => $this->getBusinessProfileChanges($business, $cursor, $responseBoundary),
+            'license_catalog' => $this->getLicenseCatalogChanges($business, $cursor, $responseBoundary),
+            'categories' => $this->getMaterializedEntityChanges(Category::class, 'categories', $business, $cursor, $responseBoundary, $limit, fn (Category $m) => $this->toCategoryPayload($m)),
+            'units' => $this->getMaterializedEntityChanges(UnitOfMeasure::class, 'units', $business, $cursor, $responseBoundary, $limit, fn (UnitOfMeasure $m) => $this->toUnitPayload($m)),
+            'employees' => $this->getMaterializedEntityChanges(Employee::class, 'employees', $business, $cursor, $responseBoundary, $limit, fn (Employee $m) => $this->toEmployeePayload($m)),
+            'warehouses' => $this->getMaterializedEntityChanges(Warehouse::class, 'warehouses', $business, $cursor, $responseBoundary, $limit, fn (Warehouse $m) => $this->toWarehousePayload($m)),
+            'points_of_sale' => $this->getMaterializedEntityChanges(PointOfSale::class, 'points_of_sale', $business, $cursor, $responseBoundary, $limit, fn (PointOfSale $m) => $this->toPointOfSalePayload($m)),
+            'cash_register_sessions' => $this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $cursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)),
+            'contacts' => $this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $cursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)),
+            'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
+            'sales' => $this->getSaleChanges($business, $cursor, $responseBoundary, $limit),
+            'purchases' => $this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $cursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)),
+            'expenses' => $this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $cursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)),
+            default => collect(),
+        };
     }
 
     /**
@@ -293,15 +389,29 @@ class SyncPullController extends Controller
     /**
      * Return unresolved conflicts visible to the client.
      *
+     * Conflicts are lightweight and independent of the per-entity sub-cursors,
+     * so we only use the minimum timestamp across the bundle as a floor to
+     * avoid re-emitting already-seen conflicts.
+     *
      * @return array<int, array<string, mixed>>
      */
-    private function getOpenConflicts(Business $business, ?SyncCursor $requestedCursor): array
+    private function getOpenConflicts(Business $business, SyncEntityCursorBundle $bundle): array
     {
+        $floor = null;
+        foreach (self::ENTITY_ORDER as $entityType) {
+            $cursor = $bundle->cursorFor($entityType);
+            if ($cursor && $cursor->updatedAt) {
+                if ($floor === null || $cursor->updatedAt->lessThan($floor)) {
+                    $floor = $cursor->updatedAt;
+                }
+            }
+        }
+
         return SyncConflict::query()
             ->where('business_id', $business->id)
             ->where('status', 'open')
-            ->when($requestedCursor?->updatedAt, function ($query) use ($requestedCursor) {
-                $query->where('updated_at', '>', $requestedCursor->updatedAt);
+            ->when($floor, function ($query) use ($floor) {
+                $query->where('updated_at', '>', $floor);
             })
             ->orderByDesc('updated_at')
             ->limit(100)

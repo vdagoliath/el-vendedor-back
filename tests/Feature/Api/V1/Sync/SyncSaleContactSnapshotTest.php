@@ -38,6 +38,37 @@ function setupSnapshotBusinessUser(): array
     return ['user' => $user, 'business' => $business, 'token' => $token];
 }
 
+/**
+ * Drive the serial pull until a sale with the given external_id appears, or
+ * we hit the iteration budget. Mirrors the client-side pull loop.
+ */
+function pullUntilSale($testCase, string $token, string $deviceId, string $externalId, int $maxIterations = 20): ?array
+{
+    $cursor = '';
+    for ($i = 0; $i < $maxIterations; $i++) {
+        $response = $testCase->withToken($token)
+            ->withHeaders(snapshotSyncHeaders())
+            ->getJson('/api/v1/sync/pull?device_id='.urlencode($deviceId).'&cursor='.urlencode($cursor));
+
+        $response->assertOk();
+
+        $match = collect($response->json('changes'))
+            ->first(fn (array $change): bool => ($change['entity_id'] ?? null) === $externalId);
+
+        if ($match) {
+            return $match;
+        }
+
+        if (! ($response->json('meta.has_more') ?? false)) {
+            return null;
+        }
+
+        $cursor = (string) $response->json('cursor');
+    }
+
+    return null;
+}
+
 test('credit sale push persists the contactSnapshot from the seller payload', function () {
     ['business' => $business, 'token' => $token] = setupSnapshotBusinessUser();
 
@@ -102,14 +133,7 @@ test('sale pull derives contactSnapshot from the linked contact when available',
         'total' => 500,
     ]);
 
-    $response = $this->withToken($token)
-        ->withHeaders(snapshotSyncHeaders())
-        ->getJson('/api/v1/sync/pull?device_id=device-snapshot-pull-1');
-
-    $response->assertOk();
-
-    $saleChange = collect($response->json('changes'))
-        ->first(fn (array $change): bool => ($change['entity_id'] ?? null) === 'sale-fresh');
+    $saleChange = pullUntilSale($this, $token, 'device-snapshot-pull-1', 'sale-fresh');
 
     expect($saleChange)->not->toBeNull();
     expect($saleChange['payload']['contact'] ?? null)->toBe('contact-fresh');
@@ -136,14 +160,7 @@ test('sale pull falls back to persisted snapshot when contact is not in contacts
         'total' => 100,
     ]);
 
-    $response = $this->withToken($token)
-        ->withHeaders(snapshotSyncHeaders())
-        ->getJson('/api/v1/sync/pull?device_id=device-snapshot-pull-2');
-
-    $response->assertOk();
-
-    $saleChange = collect($response->json('changes'))
-        ->first(fn (array $change): bool => ($change['entity_id'] ?? null) === 'sale-orphan');
+    $saleChange = pullUntilSale($this, $token, 'device-snapshot-pull-2', 'sale-orphan');
 
     expect($saleChange)->not->toBeNull();
     expect($saleChange['payload']['contactSnapshot']['name'] ?? null)->toBe('Cliente Desconectado');
@@ -163,14 +180,7 @@ test('sale pull returns null contactSnapshot when neither contact nor stored sna
         'total' => 50,
     ]);
 
-    $response = $this->withToken($token)
-        ->withHeaders(snapshotSyncHeaders())
-        ->getJson('/api/v1/sync/pull?device_id=device-snapshot-pull-3');
-
-    $response->assertOk();
-
-    $saleChange = collect($response->json('changes'))
-        ->first(fn (array $change): bool => ($change['entity_id'] ?? null) === 'sale-cashier');
+    $saleChange = pullUntilSale($this, $token, 'device-snapshot-pull-3', 'sale-cashier');
 
     expect($saleChange)->not->toBeNull();
     expect(array_key_exists('contactSnapshot', $saleChange['payload']))->toBeTrue();
