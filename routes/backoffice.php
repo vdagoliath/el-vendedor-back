@@ -17,6 +17,8 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
     Route::get('businesses', [BusinessController::class, 'index'])->name('businesses.index');
     Route::post('businesses', [BusinessController::class, 'store'])->name('businesses.store');
     Route::put('businesses/{business}', [BusinessController::class, 'update'])->name('businesses.update');
+    Route::delete('businesses/{business}', [BusinessController::class, 'destroy'])->name('businesses.destroy');
+    Route::post('businesses/{business}/restore', [BusinessController::class, 'restore'])->name('businesses.restore');
     Route::post('businesses/{business}/sync-token', [BusinessController::class, 'issueSyncToken'])->name('businesses.sync-token');
 
     Route::put('current-business', [CurrentBusinessController::class, 'update'])->name('current-business.update');
@@ -46,6 +48,9 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::delete('expenses/{entityId}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
         Route::get('team', [CurrentBusinessMemberController::class, 'index'])->name('team.index');
         Route::post('team', [CurrentBusinessMemberController::class, 'store'])->name('team.store');
+        Route::put('team/members/{member}', [CurrentBusinessMemberController::class, 'update'])->name('team.members.update');
+        Route::delete('team/members/{member}', [CurrentBusinessMemberController::class, 'destroy'])->name('team.members.destroy');
+        Route::put('team/members/{member}/password', [CurrentBusinessMemberController::class, 'updatePassword'])->name('team.members.password.update');
         Route::post('team/employees', [CurrentBusinessEmployeeController::class, 'store'])->name('team.employees.store');
         Route::put('team/employees/{entityId}', [CurrentBusinessEmployeeController::class, 'update'])->name('team.employees.update');
         Route::delete('team/employees/{entityId}', [CurrentBusinessEmployeeController::class, 'destroy'])->name('team.employees.destroy');

@@ -38,7 +38,7 @@ class BusinessController extends Controller
                     ->select('users.id', 'users.name', 'users.email', 'users.current_business_id')
                     ->orderBy('users.name'),
             ])
-            ->where('is_active', true)
+            ->orderByDesc('is_active')
             ->orderBy('name')
             ->get();
 
@@ -103,12 +103,11 @@ class BusinessController extends Controller
     }
 
     /**
-     * Update the current business profile.
+     * Update an existing business profile.
      */
     public function update(StoreBusinessRequest $request, Business $business): RedirectResponse
     {
         abort_unless($request->user()->canPrepareBusinessesForSync(), 403);
-        abort_unless($request->user()->current_business_id === $business->id, 403);
 
         $business->forceFill([
             'name' => $request->string('name')->toString(),
@@ -119,6 +118,34 @@ class BusinessController extends Controller
         ])->save();
 
         return to_route('backoffice.businesses.index')->with('success', 'Los datos del negocio se actualizaron correctamente.');
+    }
+
+    /**
+     * Deactivate a business so it cannot be used for sync or backoffice access.
+     */
+    public function destroy(Request $request, Business $business): RedirectResponse
+    {
+        abort_unless($request->user()->canPrepareBusinessesForSync(), 403);
+
+        $business->forceFill(['is_active' => false])->save();
+
+        User::query()
+            ->where('current_business_id', $business->getKey())
+            ->update(['current_business_id' => null]);
+
+        return to_route('backoffice.businesses.index')->with('success', 'El negocio fue desactivado.');
+    }
+
+    /**
+     * Reactivate a previously deactivated business.
+     */
+    public function restore(Request $request, Business $business): RedirectResponse
+    {
+        abort_unless($request->user()->canPrepareBusinessesForSync(), 403);
+
+        $business->forceFill(['is_active' => true])->save();
+
+        return to_route('backoffice.businesses.index')->with('success', 'El negocio fue reactivado.');
     }
 
     /**

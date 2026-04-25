@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
-import { Building2, CircleCheckBig, Copy, KeyRound, Plus, Store } from 'lucide-vue-next';
+import { CircleCheckBig, Copy, KeyRound, PencilLine, Plus, Power, PowerOff, Store } from 'lucide-vue-next';
 import { ref } from 'vue';
 import BusinessController from '@/actions/App/Http/Controllers/Backoffice/BusinessController';
 import CurrentBusinessController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessController';
@@ -100,6 +100,11 @@ defineProps<Props>();
 
 const page = usePage<{ auth: Auth; flash: Flash }>();
 const copiedToken = ref(false);
+const editingBusinessId = ref<number | null>(null);
+
+const toggleEdit = (businessId: number) => {
+    editingBusinessId.value = editingBusinessId.value === businessId ? null : businessId;
+};
 
 const copySyncToken = async (token: string | null) => {
     if (!token || !navigator?.clipboard) {
@@ -180,8 +185,9 @@ const breadcrumbs: BreadcrumbItem[] = [
                             v-for="business in businesses"
                             :key="business.id"
                             class="rounded-2xl border border-border/70 bg-muted/20 p-4"
+                            :class="{ 'opacity-70': !business.is_active }"
                         >
-                            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                                 <div class="space-y-2">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <h3 class="text-base font-semibold">
@@ -192,6 +198,13 @@ const breadcrumbs: BreadcrumbItem[] = [
                                             class="rounded-full"
                                         >
                                             Actual
+                                        </Badge>
+                                        <Badge
+                                            v-if="!business.is_active"
+                                            variant="outline"
+                                            class="rounded-full border-red-300 text-red-700"
+                                        >
+                                            Inactivo
                                         </Badge>
                                         <Badge
                                             v-if="business.current_user_role"
@@ -220,29 +233,137 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     </div>
                                 </div>
 
-                                <Form
-                                    v-bind="CurrentBusinessController.update.form()"
-                                    class="flex"
-                                    v-slot="{ processing }"
-                                >
-                                    <input
-                                        type="hidden"
-                                        name="business_id"
-                                        :value="business.id"
-                                    />
-                                    <Button
-                                        :disabled="processing || business.is_current"
-                                        :variant="business.is_current ? 'secondary' : 'default'"
-                                        class="min-w-40"
+                                <div class="flex flex-col gap-2 md:items-end">
+                                    <Form
+                                        v-bind="CurrentBusinessController.update.form()"
+                                        class="flex"
+                                        v-slot="{ processing }"
                                     >
-                                        <CircleCheckBig
-                                            v-if="business.is_current"
-                                            class="size-4"
+                                        <input
+                                            type="hidden"
+                                            name="business_id"
+                                            :value="business.id"
                                         />
-                                        {{ business.is_current ? 'Seleccionado' : 'Usar este negocio' }}
-                                    </Button>
-                                </Form>
+                                        <Button
+                                            :disabled="processing || business.is_current || !business.is_active"
+                                            :variant="business.is_current ? 'secondary' : 'default'"
+                                            class="min-w-40"
+                                        >
+                                            <CircleCheckBig
+                                                v-if="business.is_current"
+                                                class="size-4"
+                                            />
+                                            {{ business.is_current ? 'Seleccionado' : 'Usar este negocio' }}
+                                        </Button>
+                                    </Form>
+
+                                    <div class="flex flex-wrap gap-2 md:justify-end">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            class="min-w-32"
+                                            @click="toggleEdit(business.id)"
+                                        >
+                                            <PencilLine class="size-4" />
+                                            {{ editingBusinessId === business.id ? 'Cerrar edición' : 'Editar' }}
+                                        </Button>
+
+                                        <Form
+                                            v-if="business.is_active"
+                                            v-bind="BusinessController.destroy.form(business.id)"
+                                            class="inline-flex"
+                                            v-slot="{ processing: deactivating }"
+                                        >
+                                            <Button
+                                                :disabled="deactivating"
+                                                variant="outline"
+                                                class="min-w-32 text-red-700"
+                                            >
+                                                <PowerOff class="size-4" />
+                                                Desactivar
+                                            </Button>
+                                        </Form>
+                                        <Form
+                                            v-else
+                                            v-bind="BusinessController.restore.form(business.id)"
+                                            class="inline-flex"
+                                            v-slot="{ processing: activating }"
+                                        >
+                                            <Button
+                                                :disabled="activating"
+                                                variant="outline"
+                                                class="min-w-32 text-emerald-700"
+                                            >
+                                                <Power class="size-4" />
+                                                Reactivar
+                                            </Button>
+                                        </Form>
+                                    </div>
+                                </div>
                             </div>
+
+                            <Form
+                                v-if="editingBusinessId === business.id"
+                                v-bind="BusinessController.update.form(business.id)"
+                                class="mt-5 grid gap-4 rounded-2xl border border-dashed border-border bg-background/60 p-4"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-name-${business.id}`">Nombre del negocio</Label>
+                                        <Input
+                                            :id="`edit-name-${business.id}`"
+                                            name="name"
+                                            required
+                                            :default-value="business.name"
+                                        />
+                                        <InputError :message="errors.name" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-slug-${business.id}`">Slug</Label>
+                                        <Input
+                                            :id="`edit-slug-${business.id}`"
+                                            name="slug"
+                                            :default-value="business.slug"
+                                        />
+                                        <InputError :message="errors.slug" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-address-${business.id}`">Dirección</Label>
+                                        <Input
+                                            :id="`edit-address-${business.id}`"
+                                            name="address"
+                                            :default-value="business.address ?? ''"
+                                        />
+                                        <InputError :message="errors.address" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-phone-${business.id}`">Teléfono</Label>
+                                        <Input
+                                            :id="`edit-phone-${business.id}`"
+                                            name="phone"
+                                            :default-value="business.phone ?? ''"
+                                        />
+                                        <InputError :message="errors.phone" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-currency-${business.id}`">Moneda</Label>
+                                        <Input
+                                            :id="`edit-currency-${business.id}`"
+                                            name="default_currency"
+                                            required
+                                            :default-value="business.default_currency"
+                                        />
+                                        <InputError :message="errors.default_currency" />
+                                    </div>
+                                </div>
+
+                                <div class="flex justify-end">
+                                    <Button :disabled="processing">
+                                        Guardar cambios
+                                    </Button>
+                                </div>
+                            </Form>
                         </article>
                     </CardContent>
                 </Card>
@@ -308,7 +429,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         id="default_currency"
                                         name="default_currency"
                                         required
-                                        value="CUP"
+                                        default-value="CUP"
                                         placeholder="CUP"
                                     />
                                     <InputError :message="errors.default_currency" />
@@ -323,84 +444,6 @@ const breadcrumbs: BreadcrumbItem[] = [
                         <CardFooter class="text-sm text-muted-foreground">
                             Si no defines un slug, lo generamos automáticamente.
                         </CardFooter>
-                    </Card>
-
-                    <Card v-if="currentBusiness" class="rounded-3xl">
-                        <CardHeader>
-                            <CardTitle class="flex items-center gap-2">
-                                <Building2 class="size-4" />
-                                Configurar negocio actual
-                            </CardTitle>
-                            <CardDescription>
-                                Completa o corrige los datos operativos del negocio que tienes activo en este momento.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <Form
-                                v-bind="BusinessController.update.form(currentBusiness.id)"
-                                class="space-y-5"
-                                v-slot="{ errors, processing }"
-                            >
-                                <div class="grid gap-2">
-                                    <Label :for="`current-name-${currentBusiness.id}`">Nombre del negocio</Label>
-                                    <Input
-                                        :id="`current-name-${currentBusiness.id}`"
-                                        name="name"
-                                        required
-                                        :default-value="currentBusiness.name"
-                                    />
-                                    <InputError :message="errors.name" />
-                                </div>
-
-                                <div class="grid gap-2">
-                                    <Label :for="`current-slug-${currentBusiness.id}`">Slug</Label>
-                                    <Input
-                                        :id="`current-slug-${currentBusiness.id}`"
-                                        name="slug"
-                                        :default-value="currentBusiness.slug"
-                                    />
-                                    <InputError :message="errors.slug" />
-                                </div>
-
-                                <div class="grid gap-2">
-                                    <Label :for="`current-address-${currentBusiness.id}`">Dirección</Label>
-                                    <Input
-                                        :id="`current-address-${currentBusiness.id}`"
-                                        name="address"
-                                        :default-value="currentBusiness.address ?? ''"
-                                        placeholder="Calle 10 #123 entre A y B"
-                                    />
-                                    <InputError :message="errors.address" />
-                                </div>
-
-                                <div class="grid gap-2">
-                                    <Label :for="`current-phone-${currentBusiness.id}`">Teléfono</Label>
-                                    <Input
-                                        :id="`current-phone-${currentBusiness.id}`"
-                                        name="phone"
-                                        :default-value="currentBusiness.phone ?? ''"
-                                        placeholder="+53 55555555"
-                                    />
-                                    <InputError :message="errors.phone" />
-                                </div>
-
-                                <div class="grid gap-2">
-                                    <Label :for="`current-currency-${currentBusiness.id}`">Moneda</Label>
-                                    <Input
-                                        :id="`current-currency-${currentBusiness.id}`"
-                                        name="default_currency"
-                                        required
-                                        :default-value="currentBusiness.default_currency"
-                                        placeholder="CUP"
-                                    />
-                                    <InputError :message="errors.default_currency" />
-                                </div>
-
-                                <Button :disabled="processing" class="w-full">
-                                    Guardar cambios del negocio
-                                </Button>
-                            </Form>
-                        </CardContent>
                     </Card>
 
                     <Card v-if="currentBusiness" class="rounded-3xl">
