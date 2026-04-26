@@ -446,6 +446,10 @@ class SyncPushController extends Controller
             'license_expires_at' => $this->normalizeNullableString($payload['licenseExpiresAt'] ?? null),
         ]);
 
+        if (is_array($payload['policies'] ?? null)) {
+            $business->policies = array_merge((array) ($business->policies ?? []), $payload['policies']);
+        }
+
         $business->touch();
         $business->save();
     }

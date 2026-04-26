@@ -24,6 +24,7 @@ class Business extends Model
         'address',
         'phone',
         'default_currency',
+        'policies',
         'license_expires_at',
         'is_active',
     ];
@@ -38,6 +39,7 @@ class Business extends Model
         return [
             'is_active' => 'boolean',
             'license_expires_at' => 'datetime',
+            'policies' => 'array',
         ];
     }
 

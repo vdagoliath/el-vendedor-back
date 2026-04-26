@@ -469,6 +469,7 @@ class SyncPullController extends Controller
             'phone' => $business->phone,
             'defaultCurrency' => $business->default_currency ?? 'CUP',
             'licenseExpiresAt' => $business->license_expires_at?->toIso8601String(),
+            'policies' => $business->policies ?? [],
         ];
     }
 
