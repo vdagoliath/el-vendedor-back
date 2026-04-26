@@ -155,6 +155,45 @@ test('push business_profile without policies leaves existing policies untouched'
     ]);
 });
 
+test('push business_profile with empty address and phone preserves existing values', function () {
+    ['business' => $business, 'token' => $token] = setupOwnerForPolicies();
+
+    $business->forceFill([
+        'address' => 'Calle Existente #99',
+        'phone' => '+53 9999 8888',
+    ])->save();
+
+    $payload = [
+        'device' => ['id' => 'device-fresh-coowner', 'platform' => 'web', 'app_version' => '1.0.0'],
+        'cursor' => null,
+        'changes' => [
+            [
+                'event_id' => (string) Str::uuid(),
+                'entity_type' => 'business_profile',
+                'entity_id' => 'current_business',
+                'operation' => 'upsert',
+                'occurred_at' => Carbon::now()->toIso8601String(),
+                'payload' => [
+                    'businessName' => '',
+                    'address' => '',
+                    'phone' => '',
+                    'defaultCurrency' => 'CUP',
+                ],
+            ],
+        ],
+    ];
+
+    $this->withToken($token)
+        ->withHeaders(['X-Sync-Version' => '1', 'X-Client-App-Version' => '1.0.0'])
+        ->postJson('/api/v1/sync/push', $payload)
+        ->assertAccepted();
+
+    $business->refresh();
+
+    expect($business->address)->toBe('Calle Existente #99');
+    expect($business->phone)->toBe('+53 9999 8888');
+});
+
 test('push business_profile merges new policies with the existing ones', function () {
     ['business' => $business, 'token' => $token] = setupOwnerForPolicies();
 

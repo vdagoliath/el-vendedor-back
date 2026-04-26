@@ -438,12 +438,17 @@ class SyncPushController extends Controller
     {
         $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
 
+        // For nullable text fields we treat empty/missing values as
+        // "preserve existing" rather than "clear". This prevents a fresh
+        // device (e.g. a newly added co-owner) from clobbering the
+        // address/phone of the business with empty strings on its first
+        // bootstrap push.
         $business->fill([
             'name' => $this->normalizeNullableString($payload['businessName'] ?? null) ?: $business->name,
-            'address' => $this->normalizeNullableString($payload['address'] ?? null),
-            'phone' => $this->normalizeNullableString($payload['phone'] ?? null),
+            'address' => $this->normalizeNullableString($payload['address'] ?? null) ?? $business->address,
+            'phone' => $this->normalizeNullableString($payload['phone'] ?? null) ?? $business->phone,
             'default_currency' => $this->normalizeNullableString($payload['defaultCurrency'] ?? null) ?: ($business->default_currency ?? 'CUP'),
-            'license_expires_at' => $this->normalizeNullableString($payload['licenseExpiresAt'] ?? null),
+            'license_expires_at' => $this->normalizeNullableString($payload['licenseExpiresAt'] ?? null) ?? $business->license_expires_at,
         ]);
 
         if (is_array($payload['policies'] ?? null)) {
