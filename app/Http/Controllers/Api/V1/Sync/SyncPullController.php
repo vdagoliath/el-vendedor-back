@@ -15,6 +15,8 @@ use App\Models\PointOfSale;
 use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\Sale;
+use App\Models\StockAdjustment;
+use App\Models\StockMovement;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
 // SyncReceivedEvent ya no se usa en pull — todas las entidades están materializadas.
@@ -58,6 +60,8 @@ class SyncPullController extends Controller
         'cash_register_sessions',
         'contacts',
         'products',
+        'stock_movements',
+        'stock_adjustments',
         'sales',
         'purchases',
         'expenses',
@@ -202,6 +206,8 @@ class SyncPullController extends Controller
             'cash_register_sessions' => $this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $cursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)),
             'contacts' => $this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $cursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)),
             'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
+            'stock_movements' => $this->getMaterializedEntityChanges(StockMovement::class, 'stock_movements', $business, $cursor, $responseBoundary, $limit, fn (StockMovement $m) => $this->toStockMovementPayload($m)),
+            'stock_adjustments' => $this->getMaterializedEntityChanges(StockAdjustment::class, 'stock_adjustments', $business, $cursor, $responseBoundary, $limit, fn (StockAdjustment $m) => $this->toStockAdjustmentPayload($m)),
             'sales' => $this->getSaleChanges($business, $cursor, $responseBoundary, $limit),
             'purchases' => $this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $cursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)),
             'expenses' => $this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $cursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)),
@@ -439,6 +445,10 @@ class SyncPullController extends Controller
      */
     private function toProductPayload(Product $product): array
     {
+        // Marcamos el snapshot como seed para que un dispositivo recién
+        // bootstrappeado pueda usar `stockByWarehouse` como punto de
+        // partida. Los clientes existentes con stock local lo preservan;
+        // sólo aplican el seed cuando todavía no tienen valores propios.
         return [
             'code' => $product->code,
             'title' => $product->title,
@@ -452,6 +462,7 @@ class SyncPullController extends Controller
             'unitOfMeasurement' => $product->unit_of_measurement,
             'unitOfMeasurementPurchase' => $product->unit_of_measurement_purchase,
             'stockByWarehouse' => $product->stock_by_warehouse ?? [],
+            '_stockSeed' => true,
             'deleted_at' => $product->deleted_at?->toIso8601String(),
         ];
     }
@@ -811,6 +822,34 @@ class SyncPullController extends Controller
             'amount' => (float) $e->amount,
             'category' => $e->category,
             'deleted_at' => $e->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toStockMovementPayload(StockMovement $m): array
+    {
+        return [
+            'productId' => $m->product_external_id,
+            'fromWarehouseId' => $m->from_warehouse_external_id,
+            'toWarehouseId' => $m->to_warehouse_external_id,
+            'quantity' => (float) $m->quantity,
+            'timestamp' => $m->movement_at?->toIso8601String(),
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toStockAdjustmentPayload(StockAdjustment $a): array
+    {
+        return [
+            'productId' => $a->product_external_id,
+            'warehouseId' => $a->warehouse_external_id,
+            'quantity' => (float) $a->target_quantity,
+            'changeQuantity' => (float) $a->change_quantity,
+            'previousQuantity' => $a->previous_quantity !== null ? (float) $a->previous_quantity : null,
+            'reason' => $a->reason,
+            'timestamp' => $a->adjustment_at?->toIso8601String(),
+            'deleted_at' => $a->deleted_at?->toIso8601String(),
         ];
     }
 }

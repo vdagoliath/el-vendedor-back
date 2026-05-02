@@ -147,6 +147,16 @@ final class SyncEventReprocessor
             ]);
         }
 
+        // Mismo criterio que en SyncPushController::applyProductChange:
+        // sólo aceptamos `stockByWarehouse` cuando el push lo marca como seed
+        // inicial. En reprocesos, eso permite no tocar el stock acumulado por
+        // eventos discretos (sales, purchases, stock_movements, stock_adjustments).
+        $stockByWarehouse = $product->stock_by_warehouse ?? [];
+        $isStockSeed = ($payload['_stockSeed'] ?? false) === true;
+        if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
+            $stockByWarehouse = $payload['stockByWarehouse'];
+        }
+
         $product->fill([
             'business_id' => $business->id,
             'external_id' => $change['entity_id'],
@@ -161,7 +171,7 @@ final class SyncEventReprocessor
             'category_external_id' => $this->nullStr($payload['categoryId'] ?? null),
             'unit_of_measurement' => is_array($payload['unitOfMeasurement'] ?? null) ? $payload['unitOfMeasurement'] : null,
             'unit_of_measurement_purchase' => is_array($payload['unitOfMeasurementPurchase'] ?? null) ? $payload['unitOfMeasurementPurchase'] : null,
-            'stock_by_warehouse' => is_array($payload['stockByWarehouse'] ?? null) ? $payload['stockByWarehouse'] : [],
+            'stock_by_warehouse' => $stockByWarehouse,
             'source_created_at' => $product->source_created_at ?? $occurredAt ?? now(),
             'source_updated_at' => $occurredAt ?? now(),
             'last_received_event_id' => $event->event_id,

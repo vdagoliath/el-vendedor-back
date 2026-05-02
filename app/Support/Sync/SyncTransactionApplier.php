@@ -8,6 +8,8 @@ use App\Models\Purchase;
 use App\Models\PurchaseLine;
 use App\Models\Sale;
 use App\Models\SaleLine;
+use App\Models\StockAdjustment;
+use App\Models\StockMovement;
 use App\Models\SyncReceivedEvent;
 use Illuminate\Support\Carbon;
 use Throwable;
@@ -24,6 +26,8 @@ class SyncTransactionApplier
             'sales' => $this->applySale($business, $event, $change),
             'purchases' => $this->applyPurchase($business, $event, $change),
             'expenses' => $this->applyExpense($business, $event, $change),
+            'stock_movements' => $this->applyStockMovement($business, $event, $change),
+            'stock_adjustments' => $this->applyStockAdjustment($business, $event, $change),
             default => false,
         };
     }
@@ -218,6 +222,140 @@ class SyncTransactionApplier
 
         if ($wasTrashed) {
             $expense->restore();
+        }
+
+        return true;
+    }
+
+    private function applyStockMovement(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        $entityId = $change['entity_id'];
+        $operation = $change['operation'];
+        $occurredAt = $this->parseDate($change['occurred_at'] ?? null);
+
+        /** @var StockMovement|null $movement */
+        $movement = StockMovement::query()
+            ->withTrashed()
+            ->where('business_id', $business->id)
+            ->where('external_id', $entityId)
+            ->first();
+
+        if ($operation === 'delete') {
+            if ($movement && ! $movement->trashed()) {
+                $movement->forceFill([
+                    'last_received_event_id' => $event->event_id,
+                    'source_updated_at' => $occurredAt ?? now(),
+                ])->save();
+                $movement->delete();
+            }
+
+            return true;
+        }
+
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+
+        $productExternalId = $this->nullStr($payload['productId'] ?? null);
+        $fromWarehouseId = $this->nullStr($payload['fromWarehouseId'] ?? null);
+        $toWarehouseId = $this->nullStr($payload['toWarehouseId'] ?? null);
+        $quantity = $this->decimal($payload['quantity'] ?? 0);
+
+        if ($productExternalId === null || $fromWarehouseId === null || $toWarehouseId === null) {
+            throw new \RuntimeException('El movimiento de stock sincronizado no tiene producto u almacenes válidos.');
+        }
+
+        if (! $movement) {
+            $movement = new StockMovement([
+                'business_id' => $business->id,
+                'external_id' => $entityId,
+            ]);
+        }
+
+        $movement->fill([
+            'business_id' => $business->id,
+            'external_id' => $entityId,
+            'product_external_id' => $productExternalId,
+            'from_warehouse_external_id' => $fromWarehouseId,
+            'to_warehouse_external_id' => $toWarehouseId,
+            'quantity' => $quantity,
+            'movement_at' => $this->parseDate($payload['timestamp'] ?? null) ?? $occurredAt ?? now(),
+            'source_created_at' => $movement->source_created_at ?? $occurredAt ?? now(),
+            'source_updated_at' => $occurredAt ?? now(),
+            'last_received_event_id' => $event->event_id,
+        ]);
+
+        $wasTrashed = $movement->trashed();
+        $movement->save();
+
+        if ($wasTrashed) {
+            $movement->restore();
+        }
+
+        return true;
+    }
+
+    private function applyStockAdjustment(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        $entityId = $change['entity_id'];
+        $operation = $change['operation'];
+        $occurredAt = $this->parseDate($change['occurred_at'] ?? null);
+
+        /** @var StockAdjustment|null $adjustment */
+        $adjustment = StockAdjustment::query()
+            ->withTrashed()
+            ->where('business_id', $business->id)
+            ->where('external_id', $entityId)
+            ->first();
+
+        if ($operation === 'delete') {
+            if ($adjustment && ! $adjustment->trashed()) {
+                $adjustment->forceFill([
+                    'last_received_event_id' => $event->event_id,
+                    'source_updated_at' => $occurredAt ?? now(),
+                ])->save();
+                $adjustment->delete();
+            }
+
+            return true;
+        }
+
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+
+        $productExternalId = $this->nullStr($payload['productId'] ?? null);
+        $warehouseId = $this->nullStr($payload['warehouseId'] ?? null);
+
+        if ($productExternalId === null || $warehouseId === null) {
+            throw new \RuntimeException('El ajuste de stock sincronizado no tiene producto o almacén válido.');
+        }
+
+        if (! $adjustment) {
+            $adjustment = new StockAdjustment([
+                'business_id' => $business->id,
+                'external_id' => $entityId,
+            ]);
+        }
+
+        $adjustment->fill([
+            'business_id' => $business->id,
+            'external_id' => $entityId,
+            'product_external_id' => $productExternalId,
+            'warehouse_external_id' => $warehouseId,
+            'target_quantity' => $this->decimal($payload['quantity'] ?? 0),
+            'change_quantity' => $this->decimal($payload['changeQuantity'] ?? 0),
+            'previous_quantity' => isset($payload['previousQuantity']) && is_numeric($payload['previousQuantity'])
+                ? $this->decimal($payload['previousQuantity'])
+                : null,
+            'reason' => $this->nullStr($payload['reason'] ?? null),
+            'adjustment_at' => $this->parseDate($payload['timestamp'] ?? null) ?? $occurredAt ?? now(),
+            'source_created_at' => $adjustment->source_created_at ?? $occurredAt ?? now(),
+            'source_updated_at' => $occurredAt ?? now(),
+            'last_received_event_id' => $event->event_id,
+        ]);
+
+        $wasTrashed = $adjustment->trashed();
+        $adjustment->save();
+
+        if ($wasTrashed) {
+            $adjustment->restore();
         }
 
         return true;

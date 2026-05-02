@@ -38,6 +38,8 @@ class SyncPushController extends Controller
         'license_catalog',
         'license_quote',
         'cash_register_sessions',
+        'stock_movements',
+        'stock_adjustments',
     ];
 
     public function __construct(
@@ -400,6 +402,18 @@ class SyncPushController extends Controller
             ]);
         }
 
+        // El stock se sincroniza por eventos discretos (sales, purchases,
+        // stock_movements, stock_adjustments). Solo aceptamos el snapshot
+        // `stockByWarehouse` cuando el cliente lo marca explícitamente como
+        // seed inicial (`_stockSeed: true`). Para todos los demás updates
+        // del producto preservamos el stock existente; así un rename o
+        // cambio de precio no clobbea el stock de otros dispositivos.
+        $stockByWarehouse = $product->stock_by_warehouse ?? [];
+        $isStockSeed = ($payload['_stockSeed'] ?? false) === true;
+        if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
+            $stockByWarehouse = $payload['stockByWarehouse'];
+        }
+
         $product->fill([
             'business_id' => $business->id,
             'external_id' => $change['entity_id'],
@@ -414,7 +428,7 @@ class SyncPushController extends Controller
             'category_external_id' => $this->normalizeNullableString($payload['categoryId'] ?? null),
             'unit_of_measurement' => is_array($payload['unitOfMeasurement'] ?? null) ? $payload['unitOfMeasurement'] : null,
             'unit_of_measurement_purchase' => is_array($payload['unitOfMeasurementPurchase'] ?? null) ? $payload['unitOfMeasurementPurchase'] : null,
-            'stock_by_warehouse' => is_array($payload['stockByWarehouse'] ?? null) ? $payload['stockByWarehouse'] : [],
+            'stock_by_warehouse' => $stockByWarehouse,
             'source_created_at' => $product->source_created_at ?? $occurredAt ?? now(),
             'source_updated_at' => $occurredAt ?? now(),
             'last_received_event_id' => $event->event_id,
