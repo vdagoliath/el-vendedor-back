@@ -2,17 +2,20 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasServerVersion;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Employee extends Model
 {
+    use HasServerVersion;
     use SoftDeletes;
 
     protected $fillable = [
         'business_id',
         'external_id',
+        'server_version',
         'name',
         'mobile',
         'source_created_at',

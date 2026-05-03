@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasServerVersion;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PointOfSale extends Model
 {
+    use HasServerVersion;
     use SoftDeletes;
 
     protected $table = 'points_of_sale';
@@ -15,6 +17,7 @@ class PointOfSale extends Model
     protected $fillable = [
         'business_id',
         'external_id',
+        'server_version',
         'name',
         'warehouse_external_id',
         'employees',

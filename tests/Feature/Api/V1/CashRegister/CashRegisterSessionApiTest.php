@@ -298,3 +298,132 @@ test('sellers cannot push cash_register_sessions through the generic sync push',
         ->assertJsonPath('rejected.0.entity_type', 'cash_register_sessions')
         ->assertJsonPath('rejected.0.code', 'sync_entity_forbidden');
 });
+
+test('opening a session sets the master lease to the opening device', function () {
+    $response = $this->withToken($this->sellerToken)
+        ->postJson("/api/v1/cash-register/pos/{$this->pos->external_id}/open-session", [
+            'external_id' => 'session-master-1',
+            'opening_balance' => 0,
+            'opened_by' => [
+                'id' => 'emp-1',
+                'role' => 'seller',
+                'name' => 'Ana',
+                'deviceId' => 'device-A',
+                'deviceName' => 'Tablet A',
+            ],
+        ]);
+
+    $response
+        ->assertCreated()
+        ->assertJsonPath('session.master_device_id', 'device-A')
+        ->assertJsonPath('session.master_lease_ttl_seconds', CashRegisterSession::MASTER_LEASE_TTL_SECONDS);
+
+    expect($response->json('session.master_lease_expires_at'))->not->toBeNull();
+});
+
+test('a follower cannot claim master while another device holds an active lease', function () {
+    CashRegisterSession::factory()->state([
+        'business_id' => $this->business->id,
+        'external_id' => 'session-master-2',
+        'pos_external_id' => $this->pos->external_id,
+        'status' => 'open',
+        'master_device_id' => 'device-A',
+        'master_lease_expires_at' => now()->addMinute(),
+    ])->create();
+
+    $response = $this->withToken($this->sellerToken)
+        ->postJson('/api/v1/cash-register/sessions/session-master-2/master/claim', [
+            'device_id' => 'device-B',
+        ]);
+
+    $response
+        ->assertStatus(409)
+        ->assertJsonPath('code', 'cash_register_master_held')
+        ->assertJsonPath('session.master_device_id', 'device-A');
+});
+
+test('a follower can take master after the previous lease expired', function () {
+    CashRegisterSession::factory()->state([
+        'business_id' => $this->business->id,
+        'external_id' => 'session-master-3',
+        'pos_external_id' => $this->pos->external_id,
+        'status' => 'open',
+        'master_device_id' => 'device-A',
+        'master_lease_expires_at' => now()->subMinute(),
+    ])->create();
+
+    $response = $this->withToken($this->sellerToken)
+        ->postJson('/api/v1/cash-register/sessions/session-master-3/master/claim', [
+            'device_id' => 'device-B',
+        ]);
+
+    $response
+        ->assertOk()
+        ->assertJsonPath('session.master_device_id', 'device-B');
+
+    expect($response->json('session.master_lease_expires_at'))->not->toBeNull();
+});
+
+test('the current holder can refresh its lease and gets the TTL extended', function () {
+    $session = CashRegisterSession::factory()->state([
+        'business_id' => $this->business->id,
+        'external_id' => 'session-master-4',
+        'pos_external_id' => $this->pos->external_id,
+        'status' => 'open',
+        'master_device_id' => 'device-A',
+        'master_lease_expires_at' => now()->addSeconds(10),
+    ])->create();
+
+    $response = $this->withToken($this->sellerToken)
+        ->postJson('/api/v1/cash-register/sessions/session-master-4/master/refresh', [
+            'device_id' => 'device-A',
+        ]);
+
+    $response
+        ->assertOk()
+        ->assertJsonPath('session.master_device_id', 'device-A');
+
+    $session->refresh();
+    expect($session->master_lease_expires_at->greaterThan(now()->addSeconds(60)))->toBeTrue();
+});
+
+test('refresh is rejected when the device no longer holds the lease', function () {
+    CashRegisterSession::factory()->state([
+        'business_id' => $this->business->id,
+        'external_id' => 'session-master-5',
+        'pos_external_id' => $this->pos->external_id,
+        'status' => 'open',
+        'master_device_id' => 'device-B',
+        'master_lease_expires_at' => now()->addSeconds(30),
+    ])->create();
+
+    $response = $this->withToken($this->sellerToken)
+        ->postJson('/api/v1/cash-register/sessions/session-master-5/master/refresh', [
+            'device_id' => 'device-A',
+        ]);
+
+    $response
+        ->assertStatus(409)
+        ->assertJsonPath('code', 'cash_register_master_lease_lost');
+});
+
+test('closing a session clears the master lease', function () {
+    CashRegisterSession::factory()->state([
+        'business_id' => $this->business->id,
+        'external_id' => 'session-master-6',
+        'pos_external_id' => $this->pos->external_id,
+        'status' => 'open',
+        'master_device_id' => 'device-A',
+        'master_lease_expires_at' => now()->addMinute(),
+    ])->create();
+
+    $response = $this->withToken($this->sellerToken)
+        ->postJson('/api/v1/cash-register/sessions/session-master-6/close', [
+            'closing_balance' => 100,
+        ]);
+
+    $response
+        ->assertOk()
+        ->assertJsonPath('session.master_device_id', null)
+        ->assertJsonPath('session.master_lease_expires_at', null);
+});

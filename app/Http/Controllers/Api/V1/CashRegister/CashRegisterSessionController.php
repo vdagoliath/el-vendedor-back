@@ -50,8 +50,9 @@ class CashRegisterSessionController extends Controller
 
         $openedAt = $this->parseDate($request->input('opened_at')) ?? now();
         $openedBy = $this->normalizeActor($request->input('opened_by'));
+        $deviceId = $this->resolveDeviceId($request);
 
-        return DB::transaction(function () use ($business, $posExternalId, $request, $warehouseExternalId, $openedAt, $openedBy): JsonResponse {
+        return DB::transaction(function () use ($business, $posExternalId, $request, $warehouseExternalId, $openedAt, $openedBy, $deviceId): JsonResponse {
             $existingOpen = CashRegisterSession::query()
                 ->where('business_id', $business->id)
                 ->forPos($posExternalId)
@@ -61,6 +62,17 @@ class CashRegisterSessionController extends Controller
 
             if ($existingOpen) {
                 $joined = $existingOpen->external_id !== $request->string('external_id')->toString();
+
+                // Si el master lease expiró y este dispositivo se está
+                // sumando a la sesión, déjalo tomarlo como master en el
+                // mismo viaje. Evita un round-trip extra al cliente.
+                if ($deviceId && ! $existingOpen->masterLeaseIsActive()) {
+                    $existingOpen->forceFill([
+                        'master_device_id' => $deviceId,
+                        'master_lease_expires_at' => now()->addSeconds(CashRegisterSession::MASTER_LEASE_TTL_SECONDS),
+                        'source_updated_at' => now(),
+                    ])->save();
+                }
 
                 return response()->json([
                     'session' => $this->toPayload($existingOpen),
@@ -74,6 +86,10 @@ class CashRegisterSessionController extends Controller
                     'external_id' => $request->string('external_id')->toString(),
                     'pos_external_id' => $posExternalId,
                     'warehouse_external_id' => $warehouseExternalId,
+                    'master_device_id' => $deviceId,
+                    'master_lease_expires_at' => $deviceId
+                        ? now()->addSeconds(CashRegisterSession::MASTER_LEASE_TTL_SECONDS)
+                        : null,
                     'status' => 'open',
                     'opened_at' => $openedAt,
                     'opening_balance' => (float) $request->input('opening_balance', 0),
@@ -149,12 +165,165 @@ class CashRegisterSessionController extends Controller
             'closing_balance' => (float) $request->input('closing_balance', 0),
             'closed_by' => $closedBy,
             'final_inventory_snapshot' => $request->input('final_inventory_snapshot'),
+            // El lease deja de tener sentido en una sesión cerrada.
+            'master_device_id' => null,
+            'master_lease_expires_at' => null,
             'source_updated_at' => $closedAt,
         ])->save();
 
         return response()->json([
             'session' => $this->toPayload($session),
         ]);
+    }
+
+    /**
+     * Claim the master lease for this session. Allowed when:
+     *  - the session has no current master, OR
+     *  - the lease has expired, OR
+     *  - this device already holds the lease (idempotent renewal).
+     *
+     * Reject with 409 if another device holds an active lease.
+     */
+    public function claimMaster(Request $request, string $externalId): JsonResponse
+    {
+        $business = $this->resolveBusiness($request);
+        $deviceId = $this->resolveDeviceId($request);
+
+        if (! $deviceId) {
+            abort(422, 'No se pudo determinar el dispositivo solicitante.');
+        }
+
+        return DB::transaction(function () use ($business, $externalId, $deviceId): JsonResponse {
+            /** @var CashRegisterSession|null $session */
+            $session = CashRegisterSession::query()
+                ->where('business_id', $business->id)
+                ->where('external_id', $externalId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $session) {
+                abort(404, 'La sesión solicitada no existe.');
+            }
+
+            if (! $session->isOpen()) {
+                return response()->json([
+                    'session' => $this->toPayload($session),
+                    'message' => 'La sesión está cerrada; el lease ya no aplica.',
+                    'code' => 'cash_register_session_already_closed',
+                ], 409);
+            }
+
+            $now = now();
+            $leaseActive = $session->masterLeaseIsActive($now);
+            $isCurrentHolder = $session->master_device_id === $deviceId;
+
+            if ($leaseActive && ! $isCurrentHolder) {
+                return response()->json([
+                    'session' => $this->toPayload($session),
+                    'message' => 'Otro dispositivo tiene el lease de master para esta sesión.',
+                    'code' => 'cash_register_master_held',
+                ], 409);
+            }
+
+            $session->forceFill([
+                'master_device_id' => $deviceId,
+                'master_lease_expires_at' => $now->copy()->addSeconds(CashRegisterSession::MASTER_LEASE_TTL_SECONDS),
+                'source_updated_at' => $now,
+            ])->save();
+
+            return response()->json([
+                'session' => $this->toPayload($session),
+            ]);
+        });
+    }
+
+    /**
+     * Refresh the lease. Only the current holder may renew, and only while
+     * the lease is still active. If it expired, the holder must claim again
+     * (this prevents zombie holders racing with new claimants).
+     */
+    public function refreshMaster(Request $request, string $externalId): JsonResponse
+    {
+        $business = $this->resolveBusiness($request);
+        $deviceId = $this->resolveDeviceId($request);
+
+        if (! $deviceId) {
+            abort(422, 'No se pudo determinar el dispositivo solicitante.');
+        }
+
+        return DB::transaction(function () use ($business, $externalId, $deviceId): JsonResponse {
+            /** @var CashRegisterSession|null $session */
+            $session = CashRegisterSession::query()
+                ->where('business_id', $business->id)
+                ->where('external_id', $externalId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $session) {
+                abort(404, 'La sesión solicitada no existe.');
+            }
+
+            if (! $session->isOpen()) {
+                return response()->json([
+                    'session' => $this->toPayload($session),
+                    'message' => 'La sesión está cerrada; el lease ya no aplica.',
+                    'code' => 'cash_register_session_already_closed',
+                ], 409);
+            }
+
+            if (! $session->isMasteredBy($deviceId)) {
+                return response()->json([
+                    'session' => $this->toPayload($session),
+                    'message' => 'Este dispositivo no tiene el lease activo. Debe reclamarlo.',
+                    'code' => 'cash_register_master_lease_lost',
+                ], 409);
+            }
+
+            $session->forceFill([
+                'master_lease_expires_at' => now()->addSeconds(CashRegisterSession::MASTER_LEASE_TTL_SECONDS),
+                'source_updated_at' => now(),
+            ])->save();
+
+            return response()->json([
+                'session' => $this->toPayload($session),
+            ]);
+        });
+    }
+
+    /**
+     * Release the master lease (e.g. on logout / app close). Idempotent: if
+     * this device isn't the current holder, returns 200 with the session
+     * unchanged.
+     */
+    public function releaseMaster(Request $request, string $externalId): JsonResponse
+    {
+        $business = $this->resolveBusiness($request);
+        $deviceId = $this->resolveDeviceId($request);
+
+        return DB::transaction(function () use ($business, $externalId, $deviceId): JsonResponse {
+            /** @var CashRegisterSession|null $session */
+            $session = CashRegisterSession::query()
+                ->where('business_id', $business->id)
+                ->where('external_id', $externalId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $session) {
+                abort(404, 'La sesión solicitada no existe.');
+            }
+
+            if ($session->master_device_id === $deviceId) {
+                $session->forceFill([
+                    'master_device_id' => null,
+                    'master_lease_expires_at' => null,
+                    'source_updated_at' => now(),
+                ])->save();
+            }
+
+            return response()->json([
+                'session' => $this->toPayload($session),
+            ]);
+        });
     }
 
     /**
@@ -213,6 +382,38 @@ class CashRegisterSessionController extends Controller
         abort_unless($business instanceof Business, 409, 'No existe un negocio actual activo para sincronizar.');
 
         return $business;
+    }
+
+    /**
+     * Best-effort resolution of the device making the request. Tries (in order):
+     *  - explicit `device_id` body field (sent by claim/refresh from the client)
+     *  - `opened_by.deviceId` payload (used when opening a session)
+     *  - `X-Device-Id` header (set by the sync layer)
+     *  - the device id baked into the personal access token
+     */
+    private function resolveDeviceId(Request $request): ?string
+    {
+        $candidates = [
+            $request->input('device_id'),
+            data_get($request->input('opened_by'), 'deviceId'),
+            data_get($request->input('closed_by'), 'deviceId'),
+            $request->header('X-Device-Id'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return trim($candidate);
+            }
+        }
+
+        /** @var PersonalAccessToken|null $token */
+        $token = $request->user()?->currentAccessToken();
+        $tokenDeviceId = $token?->device_uuid ?? null;
+        if (is_string($tokenDeviceId) && trim($tokenDeviceId) !== '') {
+            return trim($tokenDeviceId);
+        }
+
+        return null;
     }
 
     private function ensurePosBelongsToBusiness(Business $business, string $posExternalId): void
@@ -316,6 +517,9 @@ class CashRegisterSessionController extends Controller
             'pos_external_id' => $session->pos_external_id,
             'warehouse_external_id' => $session->warehouse_external_id,
             'status' => $session->status,
+            'master_device_id' => $session->master_device_id,
+            'master_lease_expires_at' => $session->master_lease_expires_at?->toIso8601String(),
+            'master_lease_ttl_seconds' => CashRegisterSession::MASTER_LEASE_TTL_SECONDS,
             'opened_at' => $session->opened_at?->toIso8601String(),
             'closed_at' => $session->closed_at?->toIso8601String(),
             'opening_balance' => $session->opening_balance !== null ? (float) $session->opening_balance : 0.0,

@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasServerVersion;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class UnitOfMeasure extends Model
 {
+    use HasServerVersion;
     use SoftDeletes;
 
     protected $table = 'units_of_measure';
@@ -15,6 +17,7 @@ class UnitOfMeasure extends Model
     protected $fillable = [
         'business_id',
         'external_id',
+        'server_version',
         'name',
         'symbol',
         'category',

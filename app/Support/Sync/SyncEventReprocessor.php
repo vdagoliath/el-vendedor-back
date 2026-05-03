@@ -5,6 +5,7 @@ namespace App\Support\Sync;
 use App\Models\Business;
 use App\Models\Product;
 use App\Models\SyncReceivedEvent;
+use App\Support\Inventory\InventoryProjector;
 use Illuminate\Support\Carbon;
 use Throwable;
 
@@ -23,7 +24,8 @@ final class SyncEventReprocessor
 {
     public function __construct(
         private readonly SyncEntityApplier $entityApplier,
-        private readonly SyncTransactionApplier $transactionApplier
+        private readonly SyncTransactionApplier $transactionApplier,
+        private readonly InventoryProjector $inventoryProjector,
     ) {}
 
     /**
@@ -182,6 +184,15 @@ final class SyncEventReprocessor
 
         if ($wasTrashed) {
             $product->restore();
+        }
+
+        if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
+            $this->inventoryProjector->setSeedMany(
+                $business,
+                $product->external_id,
+                $payload['stockByWarehouse'],
+                $event->event_id
+            );
         }
     }
 

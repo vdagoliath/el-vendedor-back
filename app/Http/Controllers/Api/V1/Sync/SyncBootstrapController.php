@@ -74,6 +74,10 @@ class SyncBootstrapController extends Controller
             'pull_contract' => [
                 'cursor_type' => 'iso8601',
                 'default_limit' => 500,
+                // Formatos de cursor que el server entiende. Los clientes
+                // pueden elegir; las versiones nuevas deberían preferir
+                // `v3-server-version` (orden global por business).
+                'cursor_formats' => ['v2-serial', 'v3-server-version'],
             ],
         ]);
     }

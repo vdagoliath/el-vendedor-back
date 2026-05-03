@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
+use App\Support\Inventory\InventoryProjector;
 use App\Support\Sync\ContactPayloadNormalizer;
 use App\Support\Sync\SyncCompatibility;
 use App\Support\Sync\SyncEntityApplier;
@@ -46,7 +47,8 @@ class SyncPushController extends Controller
         private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
         private readonly SyncCompatibility $syncCompatibility,
         private readonly SyncEntityApplier $entityApplier,
-        private readonly SyncTransactionApplier $transactionApplier
+        private readonly SyncTransactionApplier $transactionApplier,
+        private readonly InventoryProjector $inventoryProjector,
     ) {}
 
     /**
@@ -440,6 +442,19 @@ class SyncPushController extends Controller
 
         if ($wasTrashed) {
             $product->restore();
+        }
+
+        // Si el push trajo seed, replicamos el snapshot a la proyección.
+        // Reemplazamos los almacenes que aparecen en el payload; los que
+        // no aparecen se dejan tal cual (un seed parcial no borra otros
+        // almacenes).
+        if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
+            $this->inventoryProjector->setSeedMany(
+                $business,
+                $product->external_id,
+                $payload['stockByWarehouse'],
+                $event->event_id
+            );
         }
     }
 

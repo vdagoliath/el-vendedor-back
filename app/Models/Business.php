@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\BusinessRole;
+use App\Models\Concerns\HasServerVersion;
 use Database\Factories\BusinessFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -12,6 +13,7 @@ class Business extends Model
 {
     /** @use HasFactory<BusinessFactory> */
     use HasFactory;
+    use HasServerVersion;
 
     /**
      * The attributes that are mass assignable.
@@ -21,6 +23,7 @@ class Business extends Model
     protected $fillable = [
         'name',
         'slug',
+        'server_version',
         'address',
         'phone',
         'default_currency',
@@ -28,6 +31,16 @@ class Business extends Model
         'license_expires_at',
         'is_active',
     ];
+
+    /**
+     * El propio id del negocio funciona como `business_id` para la
+     * asignación de `server_version` (este modelo es el "perfil del
+     * negocio" desde la óptica del cliente).
+     */
+    public function serverVersionBusinessId(): ?int
+    {
+        return $this->id ? (int) $this->id : null;
+    }
 
     /**
      * Get the attributes that should be cast.

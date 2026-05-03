@@ -86,5 +86,11 @@ Route::prefix('v1')
                     ->name('sessions.close');
                 Route::get('sessions/{externalId}/summary', [CashRegisterSessionController::class, 'summary'])
                     ->name('sessions.summary');
+                Route::post('sessions/{externalId}/master/claim', [CashRegisterSessionController::class, 'claimMaster'])
+                    ->name('sessions.master.claim');
+                Route::post('sessions/{externalId}/master/refresh', [CashRegisterSessionController::class, 'refreshMaster'])
+                    ->name('sessions.master.refresh');
+                Route::post('sessions/{externalId}/master/release', [CashRegisterSessionController::class, 'releaseMaster'])
+                    ->name('sessions.master.release');
             });
     });

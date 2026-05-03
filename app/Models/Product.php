@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasServerVersion;
 use Database\Factories\ProductFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -13,6 +14,7 @@ class Product extends Model
     /** @use HasFactory<ProductFactory> */
     use HasFactory;
 
+    use HasServerVersion;
     use SoftDeletes;
 
     /**
@@ -23,6 +25,7 @@ class Product extends Model
     protected $fillable = [
         'business_id',
         'external_id',
+        'server_version',
         'code',
         'title',
         'description',

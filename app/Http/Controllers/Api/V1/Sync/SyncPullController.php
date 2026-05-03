@@ -31,6 +31,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 // Throwable ya no se usa tras migrar a SyncCursor::parse.
 
@@ -82,12 +83,20 @@ class SyncPullController extends Controller
 
         $device = $this->touchDevice($request, $business);
         $rawCursor = $request->string('cursor')->toString() ?: null;
-        $bundle = SyncEntityCursorBundle::parse($rawCursor);
         $responseBoundary = now();
         $limit = (int) ($request->integer('limit') ?: 500);
         if ($limit < 1) {
             $limit = 500;
         }
+
+        // Cursor v3: ordenamiento global por server_version. Si el cliente
+        // envía `v3:<N>`, despachamos al pipeline nuevo. Si manda el cursor
+        // bundle (formato v2-serial) o nada, conservamos el camino legacy.
+        if (is_string($rawCursor) && str_starts_with($rawCursor, 'v3:')) {
+            return $this->indexByServerVersion($request, $business, $device, $rawCursor, $limit, $responseBoundary);
+        }
+
+        $bundle = SyncEntityCursorBundle::parse($rawCursor);
 
         $visibleChanges = collect();
         $remainingBudget = $limit;
@@ -181,6 +190,294 @@ class SyncPullController extends Controller
                 'cursor_format' => 'v2-serial',
             ],
         ]);
+    }
+
+    /**
+     * Pull con cursor numérico global (`v3:<N>`).
+     *
+     * Recolecta candidatos de TODAS las tablas materializadas filtrando
+     * por `server_version > N`, los ordena globalmente y los materializa
+     * en payloads de cambio. El cursor de respuesta es la versión del
+     * último cambio entregado.
+     */
+    private function indexByServerVersion(
+        PullSyncRequest $request,
+        Business $business,
+        Device $device,
+        string $rawCursor,
+        int $limit,
+        CarbonInterface $responseBoundary
+    ): JsonResponse {
+        $since = (int) substr($rawCursor, 3);
+        if ($since < 0) {
+            $since = 0;
+        }
+
+        $candidates = $this->collectVersionCandidates($business, $since, $limit + 1);
+        $hasMore = count($candidates) > $limit;
+        $slice = array_slice($candidates, 0, $limit);
+
+        $changes = $this->materializeVersionedChanges($business, $slice, $responseBoundary);
+
+        $licenseQuoteChanges = $this->getLicenseQuoteChanges($business, $responseBoundary);
+        $changes = collect($changes)->concat($licenseQuoteChanges)->values()->all();
+
+        $maxVersion = collect($slice)->pluck('server_version')->max();
+        $newCursor = 'v3:'.($maxVersion !== null ? (int) $maxVersion : $since);
+
+        $conflicts = $this->getOpenConflictsForCursor($business);
+
+        SyncCheckpoint::query()->updateOrCreate(
+            [
+                'business_id' => $business->id,
+                'device_id' => $device->id,
+            ],
+            [
+                'user_id' => $request->user()?->id,
+                'last_pulled_cursor' => $newCursor,
+                'last_pulled_at' => now(),
+            ]
+        );
+
+        return response()->json([
+            'cursor' => $newCursor,
+            'server_time' => $responseBoundary->toIso8601String(),
+            'changes' => $changes,
+            'conflicts' => $conflicts,
+            'meta' => [
+                'requested_cursor' => $rawCursor,
+                'device_id' => $device->id,
+                'applied_count' => count($changes),
+                'has_more' => $hasMore,
+                'cursor_format' => 'v3-server-version',
+            ],
+        ]);
+    }
+
+    /**
+     * @return array<int, array{entity_type: string, id: int, server_version: int}>
+     */
+    private function collectVersionCandidates(Business $business, int $since, int $limit): array
+    {
+        $tables = [
+            'business_profile' => ['table' => 'businesses', 'where' => 'id', 'value' => $business->id],
+            'categories' => ['table' => 'categories', 'where' => 'business_id', 'value' => $business->id],
+            'units' => ['table' => 'units_of_measure', 'where' => 'business_id', 'value' => $business->id],
+            'employees' => ['table' => 'employees', 'where' => 'business_id', 'value' => $business->id],
+            'warehouses' => ['table' => 'warehouses', 'where' => 'business_id', 'value' => $business->id],
+            'points_of_sale' => ['table' => 'points_of_sale', 'where' => 'business_id', 'value' => $business->id],
+            'cash_register_sessions' => ['table' => 'cash_register_sessions', 'where' => 'business_id', 'value' => $business->id],
+            'contacts' => ['table' => 'contacts', 'where' => 'business_id', 'value' => $business->id],
+            'products' => ['table' => 'products', 'where' => 'business_id', 'value' => $business->id],
+            'stock_movements' => ['table' => 'stock_movements', 'where' => 'business_id', 'value' => $business->id],
+            'stock_adjustments' => ['table' => 'stock_adjustments', 'where' => 'business_id', 'value' => $business->id],
+            'sales' => ['table' => 'sales', 'where' => 'business_id', 'value' => $business->id],
+            'purchases' => ['table' => 'purchases', 'where' => 'business_id', 'value' => $business->id],
+            'expenses' => ['table' => 'expenses', 'where' => 'business_id', 'value' => $business->id],
+        ];
+
+        $candidates = [];
+
+        foreach ($tables as $entityType => $info) {
+            $rows = DB::table($info['table'])
+                ->where($info['where'], $info['value'])
+                ->whereNotNull('server_version')
+                ->where('server_version', '>', $since)
+                ->orderBy('server_version')
+                ->limit($limit)
+                ->get(['id', 'server_version']);
+
+            foreach ($rows as $row) {
+                $candidates[] = [
+                    'entity_type' => $entityType,
+                    'id' => (int) $row->id,
+                    'server_version' => (int) $row->server_version,
+                ];
+            }
+        }
+
+        usort(
+            $candidates,
+            static fn (array $a, array $b): int => $a['server_version'] <=> $b['server_version']
+        );
+
+        return array_slice($candidates, 0, $limit);
+    }
+
+    /**
+     * Materializa los candidatos en payloads de cambio reusando los métodos
+     * existentes `to*Payload`. El orden del array de salida respeta el de
+     * `$candidates` (que ya viene ordenado por server_version).
+     *
+     * @param  array<int, array{entity_type: string, id: int, server_version: int}>  $candidates
+     * @return array<int, array<string, mixed>>
+     */
+    private function materializeVersionedChanges(
+        Business $business,
+        array $candidates,
+        CarbonInterface $responseBoundary
+    ): array {
+        if ($candidates === []) {
+            return [];
+        }
+
+        $idsByType = [];
+        foreach ($candidates as $candidate) {
+            $idsByType[$candidate['entity_type']][] = $candidate['id'];
+        }
+
+        $rowsByType = [];
+        foreach ($idsByType as $entityType => $ids) {
+            $rowsByType[$entityType] = $this->loadEntitiesById($entityType, $business, $ids);
+        }
+
+        $changes = [];
+        foreach ($candidates as $candidate) {
+            $type = $candidate['entity_type'];
+            $row = $rowsByType[$type][$candidate['id']] ?? null;
+            if (! $row) {
+                continue;
+            }
+            $change = $this->buildChangeForEntity($type, $row);
+            if ($change === null) {
+                continue;
+            }
+            $change['server_version'] = $candidate['server_version'];
+            $changes[] = $change;
+        }
+
+        return $changes;
+    }
+
+    /**
+     * @param  array<int, int>  $ids
+     * @return array<int, mixed>
+     */
+    private function loadEntitiesById(string $entityType, Business $business, array $ids): array
+    {
+        $modelClass = match ($entityType) {
+            'business_profile' => Business::class,
+            'categories' => Category::class,
+            'units' => UnitOfMeasure::class,
+            'employees' => Employee::class,
+            'warehouses' => Warehouse::class,
+            'points_of_sale' => PointOfSale::class,
+            'cash_register_sessions' => CashRegisterSession::class,
+            'contacts' => Contact::class,
+            'products' => Product::class,
+            'stock_movements' => StockMovement::class,
+            'stock_adjustments' => StockAdjustment::class,
+            'sales' => Sale::class,
+            'purchases' => Purchase::class,
+            'expenses' => Expense::class,
+            default => null,
+        };
+
+        if ($modelClass === null) {
+            return [];
+        }
+
+        $query = $modelClass::query();
+        if (method_exists($modelClass, 'bootSoftDeletes') || in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass), true)) {
+            $query->withTrashed();
+        }
+
+        if ($entityType === 'business_profile') {
+            $query->where('id', $business->id);
+        } else {
+            $query->where('business_id', $business->id);
+        }
+
+        $rows = $query->whereIn('id', $ids)->get();
+
+        $byId = [];
+        foreach ($rows as $row) {
+            $byId[(int) $row->id] = $row;
+        }
+
+        return $byId;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function buildChangeForEntity(string $entityType, $row): ?array
+    {
+        $occurredAtSource = $row->source_updated_at ?? $row->updated_at ?? $row->created_at;
+        $occurredAt = $occurredAtSource?->toIso8601String();
+
+        if ($entityType === 'business_profile') {
+            /** @var Business $row */
+            return [
+                'event_id' => 'server:business_profile:'.$row->id.':'.$row->updated_at?->timestamp,
+                'entity_type' => 'business_profile',
+                'entity_id' => 'current_business',
+                'operation' => 'upsert',
+                'occurred_at' => $occurredAt,
+                'payload' => $this->toBusinessProfilePayload($row),
+            ];
+        }
+
+        $isDeleted = property_exists($row, 'deleted_at') && $row->deleted_at !== null;
+        $operation = $isDeleted ? 'delete' : 'upsert';
+
+        $payload = match ($entityType) {
+            'categories' => $this->toCategoryPayload($row),
+            'units' => $this->toUnitPayload($row),
+            'employees' => $this->toEmployeePayload($row),
+            'warehouses' => $this->toWarehousePayload($row),
+            'points_of_sale' => $this->toPointOfSalePayload($row),
+            'cash_register_sessions' => $this->toCashRegisterSessionPayload($row),
+            'contacts' => $this->toContactPayload($row),
+            'products' => $this->toProductPayload($row),
+            'stock_movements' => $this->toStockMovementPayload($row),
+            'stock_adjustments' => $this->toStockAdjustmentPayload($row),
+            'sales' => $this->toSalePayload($row),
+            'purchases' => $this->toPurchasePayload($row),
+            'expenses' => $this->toExpensePayload($row),
+            default => null,
+        };
+
+        if ($payload === null) {
+            return null;
+        }
+
+        return [
+            'event_id' => $row->last_received_event_id ?? "server:{$entityType}:{$row->external_id}:{$row->updated_at?->timestamp}",
+            'entity_type' => $entityType,
+            'entity_id' => $entityType === 'business_profile' ? 'current_business' : $row->external_id,
+            'operation' => $operation,
+            'occurred_at' => $occurredAt,
+            'payload' => $payload,
+        ];
+    }
+
+    /**
+     * Versión simplificada de getOpenConflicts para el cursor v3 — devuelve
+     * todos los abiertos sin filtrar por sub-cursores.
+     */
+    private function getOpenConflictsForCursor(Business $business): array
+    {
+        return SyncConflict::query()
+            ->where('business_id', $business->id)
+            ->where('status', 'open')
+            ->orderByDesc('updated_at')
+            ->limit(100)
+            ->get()
+            ->map(function (SyncConflict $conflict): array {
+                return [
+                    'id' => $conflict->id,
+                    'event_id' => $conflict->event_id,
+                    'entity_type' => $conflict->entity_type,
+                    'entity_id' => $conflict->entity_id,
+                    'conflict_type' => $conflict->conflict_type,
+                    'local_payload' => $conflict->local_payload,
+                    'remote_payload' => $conflict->remote_payload,
+                    'status' => $conflict->status,
+                    'updated_at' => $conflict->updated_at?->toIso8601String(),
+                ];
+            })
+            ->all();
     }
 
     /**
@@ -613,6 +910,9 @@ class SyncPullController extends Controller
             'posId' => $m->pos_external_id,
             'warehouseId' => $m->warehouse_external_id,
             'status' => $m->status,
+            'master_device_id' => $m->master_device_id,
+            'master_lease_expires_at' => $m->master_lease_expires_at?->toIso8601String(),
+            'master_lease_ttl_seconds' => CashRegisterSession::MASTER_LEASE_TTL_SECONDS,
             'opened_at' => $m->opened_at?->toIso8601String(),
             'closed_at' => $m->closed_at?->toIso8601String(),
             'opening_balance' => $m->opening_balance !== null ? (float) $m->opening_balance : 0.0,
