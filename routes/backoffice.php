@@ -7,11 +7,13 @@ use App\Http\Controllers\Backoffice\CurrentBusinessController;
 use App\Http\Controllers\Backoffice\CurrentBusinessEmployeeController;
 use App\Http\Controllers\Backoffice\CurrentBusinessMemberController;
 use App\Http\Controllers\Backoffice\ExpenseController;
+use App\Http\Controllers\Backoffice\InventoryController;
 use App\Http\Controllers\Backoffice\LicensePricingController;
 use App\Http\Controllers\Backoffice\PointOfSaleController;
 use App\Http\Controllers\Backoffice\ProductController;
 use App\Http\Controllers\Backoffice\PurchaseController;
 use App\Http\Controllers\Backoffice\SaleController;
+use App\Http\Controllers\Backoffice\StockMovementController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice')->name('backoffice.')->group(function () {
@@ -44,6 +46,10 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::post('purchases/{entityId}/complete', [PurchaseController::class, 'complete'])->name('purchases.complete');
         Route::post('purchases/{entityId}/cancel', [PurchaseController::class, 'cancel'])->name('purchases.cancel');
         Route::delete('purchases/{entityId}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
+        Route::get('inventory', [InventoryController::class, 'index'])->name('inventory.index');
+        Route::get('inventory/export', [InventoryController::class, 'export'])->name('inventory.export');
+        Route::get('stock-movements', [StockMovementController::class, 'index'])->name('stock-movements.index');
+        Route::get('stock-movements/export', [StockMovementController::class, 'export'])->name('stock-movements.export');
         Route::get('points-of-sale', [PointOfSaleController::class, 'index'])->name('points-of-sale.index');
         Route::get('points-of-sale/{posExternalId}/sessions', [PointOfSaleController::class, 'sessions'])
             ->where('posExternalId', '[A-Za-z0-9_\-]+')
