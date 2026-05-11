@@ -38,6 +38,7 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::get('preparation', [BusinessPreparationController::class, 'index'])->name('preparation.index');
         Route::get('products', [ProductController::class, 'index'])->name('products.index');
         Route::get('sales', [SaleController::class, 'index'])->name('sales.index');
+        Route::get('sales/export', [SaleController::class, 'export'])->name('sales.export');
         Route::post('sales/{entityId}/return', [SaleController::class, 'markReturned'])->name('sales.return');
         Route::get('purchases', [PurchaseController::class, 'index'])->name('purchases.index');
         Route::post('purchases/{entityId}/complete', [PurchaseController::class, 'complete'])->name('purchases.complete');

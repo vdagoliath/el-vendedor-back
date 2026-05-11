@@ -5,64 +5,31 @@ namespace App\Http\Controllers\Backoffice;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Support\Backoffice\CurrentBusinessSyncStore;
+use App\Support\Backoffice\SalesExcelExporter;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SaleController extends Controller
 {
     public function __construct(
-        private readonly CurrentBusinessSyncStore $syncStore
+        private readonly CurrentBusinessSyncStore $syncStore,
+        private readonly SalesExcelExporter $excelExporter
     ) {}
 
     public function index(Request $request): Response
     {
-        $business = $request->attributes->get('currentBusiness');
-
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
-
-        $timezone = $this->resolveTimezone();
-        $search = trim($request->string('search')->toString());
-        $status = trim($request->string('status')->toString());
-        $startDate = $this->normalizeDateInput($request->string('start_date')->toString());
-        $endDate = $this->normalizeDateInput($request->string('end_date')->toString());
-        $contactsById = $this->syncStore->latestPayloadMap($business, 'contacts');
-
-        $sales = $this->syncStore->latestPayloads($business, 'sales')
-            ->filter(fn (array $sale): bool => $this->matchesDateRange($sale['dateTime'] ?? null, $startDate, $endDate, $timezone))
-            ->filter(fn (array $sale): bool => $status === '' || ($sale['status'] ?? 'pending') === $status)
-            ->filter(function (array $sale) use ($search, $contactsById): bool {
-                if ($search === '') {
-                    return true;
-                }
-
-                $contactName = $this->resolveContactName($sale['contact'] ?? null, $contactsById, 'Consumidor Final');
-                $actorName = strtolower(trim((string) ($sale['createdBy']['name'] ?? '')));
-                $haystack = strtolower(implode(' ', array_filter([
-                    (string) ($sale['reference'] ?? ''),
-                    $contactName,
-                    $actorName,
-                    $this->implodeLineTitles($sale['lines'] ?? []),
-                ])));
-
-                return str_contains($haystack, strtolower($search));
-            })
-            ->sortByDesc(fn (array $sale): int => $this->parseTimestamp($sale['dateTime'] ?? null, $timezone)?->getTimestamp() ?? 0)
-            ->values()
-            ->map(fn (array $sale): array => $this->mapSale($sale, $contactsById, $timezone))
-            ->all();
+        $business = $this->authorizeAnalyticsAccess($request);
+        $filters = $this->resolveFilters($request);
+        $sales = $this->resolveSales($business, $filters);
 
         return Inertia::render('backoffice/Sales', [
             'currentBusiness' => $this->mapBusiness($business),
-            'filters' => [
-                'search' => $search,
-                'status' => $status,
-                'start_date' => $startDate,
-                'end_date' => $endDate,
-            ],
+            'filters' => $filters,
             'stats' => [
                 'count' => count($sales),
                 'completed_count' => collect($sales)->where('status', 'completed')->count(),
@@ -70,6 +37,23 @@ class SaleController extends Controller
                 'total_amount' => round(collect($sales)->sum('total'), 2),
             ],
             'sales' => $sales,
+        ]);
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $business = $this->authorizeAnalyticsAccess($request);
+        $filters = $this->resolveFilters($request);
+        $sales = $this->resolveSales($business, $filters);
+
+        $stream = $this->excelExporter->buildStream($business, $sales);
+        $filename = sprintf('ventas-%s-%s.xlsx', $business->slug ?? $business->id, now()->format('Ymd-His'));
+
+        return response()->streamDownload(function () use ($stream): void {
+            fpassthru($stream);
+            fclose($stream);
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
     }
 
@@ -95,6 +79,62 @@ class SaleController extends Controller
         $this->syncStore->appendServerEvent($business, $request->user(), 'sales', $entityId, 'upsert', $sale);
 
         return to_route('backoffice.sales.index')->with('success', 'La venta fue marcada como devuelta y se sincronizara con los dispositivos.');
+    }
+
+    private function authorizeAnalyticsAccess(Request $request): Business
+    {
+        $business = $request->attributes->get('currentBusiness');
+
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+
+        return $business;
+    }
+
+    /**
+     * @return array{search: string, status: string, start_date: ?string, end_date: ?string}
+     */
+    private function resolveFilters(Request $request): array
+    {
+        return [
+            'search' => trim($request->string('search')->toString()),
+            'status' => trim($request->string('status')->toString()),
+            'start_date' => $this->normalizeDateInput($request->string('start_date')->toString()),
+            'end_date' => $this->normalizeDateInput($request->string('end_date')->toString()),
+        ];
+    }
+
+    /**
+     * @param  array{search: string, status: string, start_date: ?string, end_date: ?string}  $filters
+     * @return array<int, array<string, mixed>>
+     */
+    private function resolveSales(Business $business, array $filters): array
+    {
+        $timezone = $this->resolveTimezone();
+        $contactsById = $this->syncStore->latestPayloadMap($business, 'contacts');
+
+        return $this->syncStore->latestPayloads($business, 'sales')
+            ->filter(fn (array $sale): bool => $this->matchesDateRange($sale['dateTime'] ?? null, $filters['start_date'], $filters['end_date'], $timezone))
+            ->filter(fn (array $sale): bool => $filters['status'] === '' || ($sale['status'] ?? 'pending') === $filters['status'])
+            ->filter(function (array $sale) use ($filters, $contactsById): bool {
+                if ($filters['search'] === '') {
+                    return true;
+                }
+
+                $contactName = $this->resolveContactName($sale['contact'] ?? null, $contactsById, 'Consumidor Final');
+                $actorName = strtolower(trim((string) ($sale['createdBy']['name'] ?? '')));
+                $haystack = strtolower(implode(' ', array_filter([
+                    (string) ($sale['reference'] ?? ''),
+                    $contactName,
+                    $actorName,
+                    $this->implodeLineTitles($sale['lines'] ?? []),
+                ])));
+
+                return str_contains($haystack, strtolower($filters['search']));
+            })
+            ->sortByDesc(fn (array $sale): int => $this->parseTimestamp($sale['dateTime'] ?? null, $timezone)?->getTimestamp() ?? 0)
+            ->values()
+            ->map(fn (array $sale): array => $this->mapSale($sale, $contactsById, $timezone))
+            ->all();
     }
 
     /**
