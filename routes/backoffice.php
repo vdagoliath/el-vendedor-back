@@ -13,6 +13,7 @@ use App\Http\Controllers\Backoffice\PointOfSaleController;
 use App\Http\Controllers\Backoffice\ProductController;
 use App\Http\Controllers\Backoffice\PurchaseController;
 use App\Http\Controllers\Backoffice\SaleController;
+use App\Http\Controllers\Backoffice\StockAdjustmentController;
 use App\Http\Controllers\Backoffice\StockMovementController;
 use Illuminate\Support\Facades\Route;
 
@@ -50,6 +51,8 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::get('inventory/export', [InventoryController::class, 'export'])->name('inventory.export');
         Route::get('stock-movements', [StockMovementController::class, 'index'])->name('stock-movements.index');
         Route::get('stock-movements/export', [StockMovementController::class, 'export'])->name('stock-movements.export');
+        Route::get('stock-adjustments', [StockAdjustmentController::class, 'index'])->name('stock-adjustments.index');
+        Route::get('stock-adjustments/export', [StockAdjustmentController::class, 'export'])->name('stock-adjustments.export');
         Route::get('points-of-sale', [PointOfSaleController::class, 'index'])->name('points-of-sale.index');
         Route::get('points-of-sale/{posExternalId}/sessions', [PointOfSaleController::class, 'sessions'])
             ->where('posExternalId', '[A-Za-z0-9_\-]+')
