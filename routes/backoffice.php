@@ -8,6 +8,7 @@ use App\Http\Controllers\Backoffice\CurrentBusinessEmployeeController;
 use App\Http\Controllers\Backoffice\CurrentBusinessMemberController;
 use App\Http\Controllers\Backoffice\ExpenseController;
 use App\Http\Controllers\Backoffice\LicensePricingController;
+use App\Http\Controllers\Backoffice\PointOfSaleController;
 use App\Http\Controllers\Backoffice\ProductController;
 use App\Http\Controllers\Backoffice\PurchaseController;
 use App\Http\Controllers\Backoffice\SaleController;
@@ -42,6 +43,10 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::post('purchases/{entityId}/complete', [PurchaseController::class, 'complete'])->name('purchases.complete');
         Route::post('purchases/{entityId}/cancel', [PurchaseController::class, 'cancel'])->name('purchases.cancel');
         Route::delete('purchases/{entityId}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
+        Route::get('points-of-sale', [PointOfSaleController::class, 'index'])->name('points-of-sale.index');
+        Route::get('points-of-sale/{posExternalId}/sessions', [PointOfSaleController::class, 'sessions'])
+            ->where('posExternalId', '[A-Za-z0-9_\-]+')
+            ->name('points-of-sale.sessions');
         Route::get('expenses', [ExpenseController::class, 'index'])->name('expenses.index');
         Route::post('expenses', [ExpenseController::class, 'store'])->name('expenses.store');
         Route::put('expenses/{entityId}', [ExpenseController::class, 'update'])->name('expenses.update');
