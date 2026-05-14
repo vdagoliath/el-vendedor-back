@@ -2,17 +2,21 @@
 
 namespace App\Models;
 
+use App\Enums\BackofficeRole;
 use App\Enums\BusinessRole;
 use App\Models\Concerns\HasServerVersion;
 use Database\Factories\BusinessFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Business extends Model
 {
     /** @use HasFactory<BusinessFactory> */
     use HasFactory;
+
     use HasServerVersion;
 
     /**
@@ -30,6 +34,7 @@ class Business extends Model
         'policies',
         'license_expires_at',
         'is_active',
+        'created_by_user_id',
     ];
 
     /**
@@ -80,5 +85,31 @@ class Business extends Model
     public function employees(): BelongsToMany
     {
         return $this->users()->wherePivot('role', BusinessRole::Employee->value);
+    }
+
+    /**
+     * Get the backoffice user that created this business.
+     */
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    /**
+     * Limit the query to businesses visible to the given user according to
+     * their backoffice role. Implementers only see businesses they created;
+     * super admins and platform admins see everything.
+     */
+    public function scopeVisibleTo(Builder $query, User $user): Builder
+    {
+        if ($user->isPlatformAdministrator() || $user->getEffectiveBackofficeRole() === BackofficeRole::SuperAdmin) {
+            return $query;
+        }
+
+        if ($user->getEffectiveBackofficeRole() === BackofficeRole::Implementer) {
+            return $query->where('created_by_user_id', $user->getKey());
+        }
+
+        return $query->whereRaw('1 = 0');
     }
 }

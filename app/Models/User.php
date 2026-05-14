@@ -212,12 +212,15 @@ class User extends Authenticatable
             return false;
         }
 
-        if ($this->hasBackofficeRole()) {
+        if ($this->isPlatformAdministrator() || $this->getEffectiveBackofficeRole() === BackofficeRole::SuperAdmin) {
             return true;
         }
 
-        return $this->isPlatformAdministrator()
-            || $this->activeBusinesses()->whereKey($business->getKey())->exists();
+        if ($this->getEffectiveBackofficeRole() === BackofficeRole::Implementer) {
+            return (int) $business->created_by_user_id === (int) $this->getKey();
+        }
+
+        return $this->activeBusinesses()->whereKey($business->getKey())->exists();
     }
 
     /**
@@ -276,6 +279,28 @@ class User extends Authenticatable
     public function canPrepareBusinessForSync(Business $business): bool
     {
         return $this->canPrepareBusinessesForSync() && $this->canAccessBusiness($business);
+    }
+
+    /**
+     * Determine if the user can manage the given business from the backoffice,
+     * regardless of whether it is currently active. Used for actions like
+     * editing, deactivating or restoring a business.
+     */
+    public function canManageBusinessFromBackoffice(Business $business): bool
+    {
+        if (! $this->canPrepareBusinessesForSync()) {
+            return false;
+        }
+
+        if ($this->isPlatformAdministrator() || $this->getEffectiveBackofficeRole() === BackofficeRole::SuperAdmin) {
+            return true;
+        }
+
+        if ($this->getEffectiveBackofficeRole() === BackofficeRole::Implementer) {
+            return (int) $business->created_by_user_id === (int) $this->getKey();
+        }
+
+        return false;
     }
 
     /**

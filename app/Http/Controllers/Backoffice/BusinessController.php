@@ -32,6 +32,7 @@ class BusinessController extends Controller
         abort_unless($user->canPrepareBusinessesForSync(), 403);
 
         $businesses = Business::query()
+            ->visibleTo($user)
             ->with([
                 'owners' => fn ($query) => $query
                     ->wherePivot('is_active', true)
@@ -95,6 +96,7 @@ class BusinessController extends Controller
             'phone' => $request->string('phone')->toString() ?: null,
             'default_currency' => $request->string('default_currency')->toString(),
             'is_active' => true,
+            'created_by_user_id' => $request->user()->getKey(),
         ]);
 
         $request->user()->switchCurrentBusiness($business);
@@ -107,7 +109,7 @@ class BusinessController extends Controller
      */
     public function update(StoreBusinessRequest $request, Business $business): RedirectResponse
     {
-        abort_unless($request->user()->canPrepareBusinessesForSync(), 403);
+        abort_unless($request->user()->canManageBusinessFromBackoffice($business), 403);
 
         $business->forceFill([
             'name' => $request->string('name')->toString(),
@@ -125,7 +127,7 @@ class BusinessController extends Controller
      */
     public function destroy(Request $request, Business $business): RedirectResponse
     {
-        abort_unless($request->user()->canPrepareBusinessesForSync(), 403);
+        abort_unless($request->user()->canManageBusinessFromBackoffice($business), 403);
 
         $business->forceFill(['is_active' => false])->save();
 
@@ -141,7 +143,7 @@ class BusinessController extends Controller
      */
     public function restore(Request $request, Business $business): RedirectResponse
     {
-        abort_unless($request->user()->canPrepareBusinessesForSync(), 403);
+        abort_unless($request->user()->canManageBusinessFromBackoffice($business), 403);
 
         $business->forceFill(['is_active' => true])->save();
 
