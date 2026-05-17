@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
 import { usePage } from '@inertiajs/vue3';
-import { BadgeCheck, Boxes, Building2, ClipboardCheck, LayoutGrid, PackageSearch, ReceiptText, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Store, Truck, Users } from 'lucide-vue-next';
+import { BadgeCheck, Boxes, Building2, ClipboardCheck, LayoutGrid, PackageSearch, ReceiptText, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Store, Trash2, Truck, Users } from 'lucide-vue-next';
 import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
 import { useTranslations } from '@/composables/useTranslations';
@@ -21,6 +21,7 @@ import {
 import { index as backofficeBusinesses } from '@/routes/backoffice/businesses';
 import { index as backofficeExpenses } from '@/routes/backoffice/expenses';
 import { index as backofficeInventory } from '@/routes/backoffice/inventory';
+import { index as backofficeLosses } from '@/routes/backoffice/losses';
 import { index as backofficePreparation } from '@/routes/backoffice/preparation';
 import { index as backofficeProducts } from '@/routes/backoffice/products';
 import { index as backofficePointsOfSale } from '@/routes/backoffice/points-of-sale';
@@ -139,6 +140,11 @@ const mainNavItems = computed(() => {
                 title: t('stockAdjustments'),
                 href: backofficeStockAdjustments(),
                 icon: SlidersHorizontal,
+            },
+            {
+                title: t('losses'),
+                href: backofficeLosses(),
+                icon: Trash2,
             },
         );
     }

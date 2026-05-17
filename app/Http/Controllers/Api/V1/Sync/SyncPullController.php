@@ -13,6 +13,7 @@ use App\Models\Employee;
 use App\Models\Expense;
 use App\Models\PointOfSale;
 use App\Models\Product;
+use App\Models\ProductLoss;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\StockAdjustment;
@@ -28,6 +29,7 @@ use App\Support\Sync\SyncCompatibility;
 use App\Support\Sync\SyncCursor;
 use App\Support\Sync\SyncEntityCursorBundle;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -63,6 +65,7 @@ class SyncPullController extends Controller
         'products',
         'stock_movements',
         'stock_adjustments',
+        'product_losses',
         'sales',
         'purchases',
         'expenses',
@@ -271,6 +274,7 @@ class SyncPullController extends Controller
             'products' => ['table' => 'products', 'where' => 'business_id', 'value' => $business->id],
             'stock_movements' => ['table' => 'stock_movements', 'where' => 'business_id', 'value' => $business->id],
             'stock_adjustments' => ['table' => 'stock_adjustments', 'where' => 'business_id', 'value' => $business->id],
+            'product_losses' => ['table' => 'product_losses', 'where' => 'business_id', 'value' => $business->id],
             'sales' => ['table' => 'sales', 'where' => 'business_id', 'value' => $business->id],
             'purchases' => ['table' => 'purchases', 'where' => 'business_id', 'value' => $business->id],
             'expenses' => ['table' => 'expenses', 'where' => 'business_id', 'value' => $business->id],
@@ -367,6 +371,7 @@ class SyncPullController extends Controller
             'products' => Product::class,
             'stock_movements' => StockMovement::class,
             'stock_adjustments' => StockAdjustment::class,
+            'product_losses' => ProductLoss::class,
             'sales' => Sale::class,
             'purchases' => Purchase::class,
             'expenses' => Expense::class,
@@ -378,7 +383,7 @@ class SyncPullController extends Controller
         }
 
         $query = $modelClass::query();
-        if (method_exists($modelClass, 'bootSoftDeletes') || in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass), true)) {
+        if (method_exists($modelClass, 'bootSoftDeletes') || in_array(SoftDeletes::class, class_uses_recursive($modelClass), true)) {
             $query->withTrashed();
         }
 
@@ -432,6 +437,7 @@ class SyncPullController extends Controller
             'products' => $this->toProductPayload($row),
             'stock_movements' => $this->toStockMovementPayload($row),
             'stock_adjustments' => $this->toStockAdjustmentPayload($row),
+            'product_losses' => $this->toProductLossPayload($row),
             'sales' => $this->toSalePayload($row),
             'purchases' => $this->toPurchasePayload($row),
             'expenses' => $this->toExpensePayload($row),
@@ -505,6 +511,7 @@ class SyncPullController extends Controller
             'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
             'stock_movements' => $this->getMaterializedEntityChanges(StockMovement::class, 'stock_movements', $business, $cursor, $responseBoundary, $limit, fn (StockMovement $m) => $this->toStockMovementPayload($m)),
             'stock_adjustments' => $this->getMaterializedEntityChanges(StockAdjustment::class, 'stock_adjustments', $business, $cursor, $responseBoundary, $limit, fn (StockAdjustment $m) => $this->toStockAdjustmentPayload($m)),
+            'product_losses' => $this->getMaterializedEntityChanges(ProductLoss::class, 'product_losses', $business, $cursor, $responseBoundary, $limit, fn (ProductLoss $m) => $this->toProductLossPayload($m)),
             'sales' => $this->getSaleChanges($business, $cursor, $responseBoundary, $limit),
             'purchases' => $this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $cursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)),
             'expenses' => $this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $cursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)),
@@ -1150,6 +1157,23 @@ class SyncPullController extends Controller
             'reason' => $a->reason,
             'timestamp' => $a->adjustment_at?->toIso8601String(),
             'deleted_at' => $a->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toProductLossPayload(ProductLoss $l): array
+    {
+        return [
+            'productId' => $l->product_external_id,
+            'warehouseId' => $l->warehouse_external_id,
+            'quantity' => (float) $l->quantity,
+            'lossType' => $l->loss_type,
+            'notes' => $l->notes,
+            'photo' => $l->photo,
+            'unitCost' => $l->unit_cost !== null ? (float) $l->unit_cost : null,
+            'previousQuantity' => $l->previous_quantity !== null ? (float) $l->previous_quantity : null,
+            'timestamp' => $l->loss_at?->toIso8601String(),
+            'deleted_at' => $l->deleted_at?->toIso8601String(),
         ];
     }
 }

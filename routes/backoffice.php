@@ -11,6 +11,7 @@ use App\Http\Controllers\Backoffice\InventoryController;
 use App\Http\Controllers\Backoffice\LicensePricingController;
 use App\Http\Controllers\Backoffice\PointOfSaleController;
 use App\Http\Controllers\Backoffice\ProductController;
+use App\Http\Controllers\Backoffice\ProductLossController;
 use App\Http\Controllers\Backoffice\PurchaseController;
 use App\Http\Controllers\Backoffice\SaleController;
 use App\Http\Controllers\Backoffice\StockAdjustmentController;
@@ -53,6 +54,8 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::get('stock-movements/export', [StockMovementController::class, 'export'])->name('stock-movements.export');
         Route::get('stock-adjustments', [StockAdjustmentController::class, 'index'])->name('stock-adjustments.index');
         Route::get('stock-adjustments/export', [StockAdjustmentController::class, 'export'])->name('stock-adjustments.export');
+        Route::get('losses', [ProductLossController::class, 'index'])->name('losses.index');
+        Route::get('losses/export', [ProductLossController::class, 'export'])->name('losses.export');
         Route::get('points-of-sale', [PointOfSaleController::class, 'index'])->name('points-of-sale.index');
         Route::get('points-of-sale/{posExternalId}/sessions', [PointOfSaleController::class, 'sessions'])
             ->where('posExternalId', '[A-Za-z0-9_\-]+')

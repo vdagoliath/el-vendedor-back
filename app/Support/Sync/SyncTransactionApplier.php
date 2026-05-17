@@ -4,6 +4,7 @@ namespace App\Support\Sync;
 
 use App\Models\Business;
 use App\Models\Expense;
+use App\Models\ProductLoss;
 use App\Models\Purchase;
 use App\Models\PurchaseLine;
 use App\Models\Sale;
@@ -17,9 +18,7 @@ use Throwable;
 
 class SyncTransactionApplier
 {
-    public function __construct(private readonly InventoryProjector $projector)
-    {
-    }
+    public function __construct(private readonly InventoryProjector $projector) {}
 
     /**
      * Apply a transaction sync change to the corresponding materialized table.
@@ -33,6 +32,7 @@ class SyncTransactionApplier
             'expenses' => $this->applyExpense($business, $event, $change),
             'stock_movements' => $this->applyStockMovement($business, $event, $change),
             'stock_adjustments' => $this->applyStockAdjustment($business, $event, $change),
+            'product_losses' => $this->applyProductLoss($business, $event, $change),
             default => false,
         };
     }
@@ -545,6 +545,108 @@ class SyncTransactionApplier
                 $productExternalId,
                 $warehouseId,
                 (float) $changeQuantity,
+                $event->event_id
+            );
+        }
+
+        return true;
+    }
+
+    private function applyProductLoss(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        $entityId = $change['entity_id'];
+        $operation = $change['operation'];
+        $occurredAt = $this->parseDate($change['occurred_at'] ?? null);
+
+        /** @var ProductLoss|null $loss */
+        $loss = ProductLoss::query()
+            ->withTrashed()
+            ->where('business_id', $business->id)
+            ->where('external_id', $entityId)
+            ->first();
+
+        if ($operation === 'delete') {
+            if ($loss && ! $loss->trashed()) {
+                $this->projector->applyDelta(
+                    $business,
+                    $loss->product_external_id,
+                    $loss->warehouse_external_id,
+                    +(float) $loss->quantity,
+                    $event->event_id
+                );
+
+                $loss->forceFill([
+                    'last_received_event_id' => $event->event_id,
+                    'source_updated_at' => $occurredAt ?? now(),
+                ])->save();
+                $loss->delete();
+            }
+
+            return true;
+        }
+
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+
+        $productExternalId = $this->nullStr($payload['productId'] ?? null);
+        $warehouseId = $this->nullStr($payload['warehouseId'] ?? null);
+
+        if ($productExternalId === null || $warehouseId === null) {
+            throw new \RuntimeException('La merma sincronizada no tiene producto o almacén válido.');
+        }
+
+        $quantity = $this->decimal($payload['quantity'] ?? 0);
+        if ((float) $quantity <= 0.0) {
+            throw new \RuntimeException('La merma sincronizada debe tener una cantidad positiva.');
+        }
+
+        $lossType = $this->nullStr($payload['lossType'] ?? null) ?? 'other';
+        if (! in_array($lossType, ['damaged', 'expired', 'stolen', 'other'], true)) {
+            $lossType = 'other';
+        }
+
+        $isNew = $loss === null;
+
+        if (! $loss) {
+            $loss = new ProductLoss([
+                'business_id' => $business->id,
+                'external_id' => $entityId,
+            ]);
+        }
+
+        $loss->fill([
+            'business_id' => $business->id,
+            'external_id' => $entityId,
+            'product_external_id' => $productExternalId,
+            'warehouse_external_id' => $warehouseId,
+            'quantity' => $quantity,
+            'loss_type' => $lossType,
+            'notes' => $this->nullStr($payload['notes'] ?? null),
+            'photo' => $this->nullStr($payload['photo'] ?? null),
+            'unit_cost' => isset($payload['unitCost']) && is_numeric($payload['unitCost'])
+                ? $this->decimal($payload['unitCost'])
+                : null,
+            'previous_quantity' => isset($payload['previousQuantity']) && is_numeric($payload['previousQuantity'])
+                ? $this->decimal($payload['previousQuantity'])
+                : null,
+            'loss_at' => $this->parseDate($payload['timestamp'] ?? null) ?? $occurredAt ?? now(),
+            'source_created_at' => $loss->source_created_at ?? $occurredAt ?? now(),
+            'source_updated_at' => $occurredAt ?? now(),
+            'last_received_event_id' => $event->event_id,
+        ]);
+
+        $wasTrashed = $loss->trashed();
+        $loss->save();
+
+        if ($wasTrashed) {
+            $loss->restore();
+        }
+
+        if ($isNew || $wasTrashed) {
+            $this->projector->applyDelta(
+                $business,
+                $productExternalId,
+                $warehouseId,
+                -(float) $quantity,
                 $event->event_id
             );
         }
