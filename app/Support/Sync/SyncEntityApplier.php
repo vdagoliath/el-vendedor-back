@@ -105,9 +105,17 @@ class SyncEntityApplier
             $business,
             $event,
             $change,
-            fn (array $payload) => [
-                'name' => trim((string) ($payload['name'] ?? '')),
-            ]
+            function (array $payload): array {
+                $address = is_array($payload['address'] ?? null) ? $payload['address'] : [];
+
+                return [
+                    'name' => trim((string) ($payload['name'] ?? '')),
+                    'country' => $this->nullableString($address['country'] ?? null),
+                    'province' => $this->nullableString($address['province'] ?? null),
+                    'municipality' => $this->nullableString($address['municipality'] ?? null),
+                    'street' => $this->nullableString($address['street'] ?? null),
+                ];
+            }
         );
     }
 

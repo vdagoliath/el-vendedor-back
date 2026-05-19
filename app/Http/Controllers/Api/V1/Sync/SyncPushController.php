@@ -473,9 +473,24 @@ class SyncPushController extends Controller
         // device (e.g. a newly added co-owner) from clobbering the
         // address/phone of the business with empty strings on its first
         // bootstrap push.
+        $addressPayload = is_array($payload['address'] ?? null) ? $payload['address'] : null;
+        $legacyAddressString = is_string($payload['address'] ?? null) ? $payload['address'] : null;
+
         $business->fill([
             'name' => $this->normalizeNullableString($payload['businessName'] ?? null) ?: $business->name,
-            'address' => $this->normalizeNullableString($payload['address'] ?? null) ?? $business->address,
+            'address' => $this->normalizeNullableString($legacyAddressString) ?? $business->address,
+            'country' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['country'] ?? null) ?? $business->country)
+                : $business->country,
+            'province' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['province'] ?? null) ?? $business->province)
+                : $business->province,
+            'municipality' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['municipality'] ?? null) ?? $business->municipality)
+                : $business->municipality,
+            'street' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['street'] ?? null) ?? $business->street)
+                : $business->street,
             'phone' => $this->normalizeNullableString($payload['phone'] ?? null) ?? $business->phone,
             'default_currency' => $this->normalizeNullableString($payload['defaultCurrency'] ?? null) ?: ($business->default_currency ?? 'CUP'),
             'license_expires_at' => $this->normalizeNullableString($payload['licenseExpiresAt'] ?? null) ?? $business->license_expires_at,

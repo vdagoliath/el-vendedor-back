@@ -780,7 +780,12 @@ class SyncPullController extends Controller
     {
         return [
             'businessName' => $business->name,
-            'address' => $business->address,
+            'address' => [
+                'country' => $business->country ?? 'CU',
+                'province' => $business->province ?? '',
+                'municipality' => $business->municipality ?? '',
+                'street' => $business->street ?? (string) ($business->address ?? ''),
+            ],
             'phone' => $business->phone,
             'defaultCurrency' => $business->default_currency ?? 'CUP',
             'licenseExpiresAt' => $business->license_expires_at?->toIso8601String(),
@@ -893,6 +898,12 @@ class SyncPullController extends Controller
         return [
             '_id' => $m->external_id,
             'name' => $m->name,
+            'address' => [
+                'country' => $m->country ?? 'CU',
+                'province' => $m->province ?? '',
+                'municipality' => $m->municipality ?? '',
+                'street' => $m->street ?? '',
+            ],
             'deleted_at' => $m->deleted_at?->toIso8601String(),
         ];
     }

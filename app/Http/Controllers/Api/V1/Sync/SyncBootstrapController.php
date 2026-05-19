@@ -34,7 +34,12 @@ class SyncBootstrapController extends Controller
                 'id' => $business->id,
                 'name' => $business->name,
                 'slug' => $business->slug,
-                'address' => $business->address,
+                'address' => [
+                    'country' => $business->country ?? 'CU',
+                    'province' => $business->province ?? '',
+                    'municipality' => $business->municipality ?? '',
+                    'street' => $business->street ?? (string) ($business->address ?? ''),
+                ],
                 'phone' => $business->phone,
                 'default_currency' => $business->default_currency ?? 'CUP',
                 'license_expires_at' => $business->license_expires_at?->toIso8601String(),
