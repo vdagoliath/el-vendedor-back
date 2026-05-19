@@ -423,7 +423,7 @@ class SyncPullController extends Controller
             ];
         }
 
-        $isDeleted = property_exists($row, 'deleted_at') && $row->deleted_at !== null;
+        $isDeleted = isset($row->deleted_at) && $row->deleted_at !== null;
         $operation = $isDeleted ? 'delete' : 'upsert';
 
         $payload = match ($entityType) {
