@@ -30,8 +30,21 @@ type BusinessItem = {
     name: string;
     slug: string;
     address: string | null;
+    province: string | null;
+    municipality: string | null;
+    street: string | null;
     phone: string | null;
     default_currency: string;
+    policies: {
+        allowZeroStockSales: boolean;
+        enableDebtManagement: boolean;
+        showPrice: boolean;
+        showStock: boolean;
+        showQrCodeGenerator: boolean;
+        printSaleReceiptEnabled: boolean;
+        productCodePrefix: string;
+        productCodeDigits: number;
+    };
     owner_emails: string[];
     is_active: boolean;
     current_user_role: string | null;
@@ -227,6 +240,26 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <p v-if="business.address">
                                             Dirección: {{ business.address }}
                                         </p>
+                                        <p v-if="business.province || business.municipality">
+                                            Ubicación: {{ [business.municipality, business.province].filter(Boolean).join(', ') }}
+                                        </p>
+                                        <p>
+                                            Ventas sin stock:
+                                            {{ business.policies.allowZeroStockSales ? 'permitidas' : 'bloqueadas' }}
+                                        </p>
+                                        <p>
+                                            Deudas:
+                                            {{ business.policies.enableDebtManagement ? 'activadas' : 'desactivadas' }}
+                                        </p>
+                                        <p>
+                                            Comprobante:
+                                            {{ business.policies.printSaleReceiptEnabled ? 'se imprime' : 'no se imprime' }}
+                                        </p>
+                                        <p v-if="business.policies.productCodePrefix || business.policies.productCodeDigits">
+                                            Autonumérico:
+                                            {{ business.policies.productCodePrefix || 'Sin prefijo' }}
+                                            {{ business.policies.productCodeDigits }} cifras
+                                        </p>
                                         <p v-if="business.owner_emails.length">
                                             Dueños: {{ business.owner_emails.join(', ') }}
                                         </p>
@@ -329,7 +362,34 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <InputError :message="errors.slug" />
                                     </div>
                                     <div class="grid gap-2">
-                                        <Label :for="`edit-address-${business.id}`">Dirección</Label>
+                                        <Label :for="`edit-province-${business.id}`">Provincia</Label>
+                                        <Input
+                                            :id="`edit-province-${business.id}`"
+                                            name="province"
+                                            :default-value="business.province ?? ''"
+                                        />
+                                        <InputError :message="errors.province" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-municipality-${business.id}`">Municipio</Label>
+                                        <Input
+                                            :id="`edit-municipality-${business.id}`"
+                                            name="municipality"
+                                            :default-value="business.municipality ?? ''"
+                                        />
+                                        <InputError :message="errors.municipality" />
+                                    </div>
+                                    <div class="grid gap-2 md:col-span-2">
+                                        <Label :for="`edit-street-${business.id}`">Calle y número</Label>
+                                        <Input
+                                            :id="`edit-street-${business.id}`"
+                                            name="street"
+                                            :default-value="business.street ?? business.address ?? ''"
+                                        />
+                                        <InputError :message="errors.street" />
+                                    </div>
+                                    <div class="grid gap-2 md:col-span-2">
+                                        <Label :for="`edit-address-${business.id}`">Dirección legada</Label>
                                         <Input
                                             :id="`edit-address-${business.id}`"
                                             name="address"
@@ -355,6 +415,45 @@ const breadcrumbs: BreadcrumbItem[] = [
                                             :default-value="business.default_currency"
                                         />
                                         <InputError :message="errors.default_currency" />
+                                    </div>
+                                </div>
+
+                                <div class="grid gap-4 rounded-2xl border border-border/70 p-4 md:grid-cols-2">
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="allow_zero_stock_sales" value="0" />
+                                        <input type="checkbox" name="allow_zero_stock_sales" value="1" :checked="business.policies.allowZeroStockSales" />
+                                        Permitir ventas sin stock disponible
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="enable_debt_management" value="0" />
+                                        <input type="checkbox" name="enable_debt_management" value="1" :checked="business.policies.enableDebtManagement" />
+                                        Gestión de deudas
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="print_sale_receipt_enabled" value="0" />
+                                        <input type="checkbox" name="print_sale_receipt_enabled" value="1" :checked="business.policies.printSaleReceiptEnabled" />
+                                        Imprimir comprobante de ventas
+                                    </label>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-product-code-prefix-${business.id}`">Prefijo del autonumérico</Label>
+                                        <Input
+                                            :id="`edit-product-code-prefix-${business.id}`"
+                                            name="product_code_prefix"
+                                            :default-value="business.policies.productCodePrefix"
+                                        />
+                                        <InputError :message="errors.product_code_prefix" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-product-code-digits-${business.id}`">Cifras del autonumérico</Label>
+                                        <Input
+                                            :id="`edit-product-code-digits-${business.id}`"
+                                            name="product_code_digits"
+                                            type="number"
+                                            min="0"
+                                            max="20"
+                                            :default-value="business.policies.productCodeDigits"
+                                        />
+                                        <InputError :message="errors.product_code_digits" />
                                     </div>
                                 </div>
 
@@ -404,7 +503,37 @@ const breadcrumbs: BreadcrumbItem[] = [
                                 </div>
 
                                 <div class="grid gap-2">
-                                    <Label for="address">Dirección</Label>
+                                    <Label for="province">Provincia</Label>
+                                    <Input
+                                        id="province"
+                                        name="province"
+                                        placeholder="La Habana"
+                                    />
+                                    <InputError :message="errors.province" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="municipality">Municipio</Label>
+                                    <Input
+                                        id="municipality"
+                                        name="municipality"
+                                        placeholder="Plaza de la Revolución"
+                                    />
+                                    <InputError :message="errors.municipality" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="street">Calle y número</Label>
+                                    <Input
+                                        id="street"
+                                        name="street"
+                                        placeholder="Calle 10 #123 entre A y B"
+                                    />
+                                    <InputError :message="errors.street" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="address">Dirección legada</Label>
                                     <Input
                                         id="address"
                                         name="address"
@@ -433,6 +562,45 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         placeholder="CUP"
                                     />
                                     <InputError :message="errors.default_currency" />
+                                </div>
+
+                                <div class="grid gap-4 rounded-2xl border border-border/70 p-4">
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="allow_zero_stock_sales" value="0" />
+                                        <input type="checkbox" name="allow_zero_stock_sales" value="1" checked />
+                                        Permitir ventas sin stock disponible
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="enable_debt_management" value="0" />
+                                        <input type="checkbox" name="enable_debt_management" value="1" checked />
+                                        Gestión de deudas
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="print_sale_receipt_enabled" value="0" />
+                                        <input type="checkbox" name="print_sale_receipt_enabled" value="1" />
+                                        Imprimir comprobante de ventas
+                                    </label>
+                                    <div class="grid gap-2">
+                                        <Label for="product_code_prefix">Prefijo del autonumérico</Label>
+                                        <Input
+                                            id="product_code_prefix"
+                                            name="product_code_prefix"
+                                            placeholder="PROD-"
+                                        />
+                                        <InputError :message="errors.product_code_prefix" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="product_code_digits">Cifras del autonumérico</Label>
+                                        <Input
+                                            id="product_code_digits"
+                                            name="product_code_digits"
+                                            type="number"
+                                            min="0"
+                                            max="20"
+                                            value="0"
+                                        />
+                                        <InputError :message="errors.product_code_digits" />
+                                    </div>
                                 </div>
 
                                 <Button :disabled="processing" class="w-full">

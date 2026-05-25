@@ -43,6 +43,7 @@ class SyncBootstrapController extends Controller
                 'phone' => $business->phone,
                 'default_currency' => $business->default_currency ?? 'CUP',
                 'license_expires_at' => $business->license_expires_at?->toIso8601String(),
+                'policies' => $business->policies ?? [],
                 'license_catalog' => $this->pricingResolver->catalog(),
                 'license_quote' => $this->pricingResolver->quote($business),
             ],

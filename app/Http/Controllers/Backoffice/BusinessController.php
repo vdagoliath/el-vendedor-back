@@ -93,8 +93,13 @@ class BusinessController extends Controller
             'name' => $request->string('name')->toString(),
             'slug' => $this->resolveSlug($request),
             'address' => $request->string('address')->toString() ?: null,
+            'country' => 'CU',
+            'province' => $request->string('province')->toString() ?: null,
+            'municipality' => $request->string('municipality')->toString() ?: null,
+            'street' => $request->string('street')->toString() ?: ($request->string('address')->toString() ?: null),
             'phone' => $request->string('phone')->toString() ?: null,
             'default_currency' => $request->string('default_currency')->toString(),
+            'policies' => $this->businessPoliciesFromRequest($request),
             'is_active' => true,
             'created_by_user_id' => $request->user()->getKey(),
         ]);
@@ -115,8 +120,13 @@ class BusinessController extends Controller
             'name' => $request->string('name')->toString(),
             'slug' => $this->resolveSlug($request, $business),
             'address' => $request->string('address')->toString() ?: null,
+            'country' => $business->country ?? 'CU',
+            'province' => $request->string('province')->toString() ?: null,
+            'municipality' => $request->string('municipality')->toString() ?: null,
+            'street' => $request->string('street')->toString() ?: ($request->string('address')->toString() ?: null),
             'phone' => $request->string('phone')->toString() ?: null,
             'default_currency' => $request->string('default_currency')->toString(),
+            'policies' => $this->businessPoliciesFromRequest($request, (array) ($business->policies ?? [])),
         ])->save();
 
         return to_route('backoffice.businesses.index')->with('success', 'Los datos del negocio se actualizaron correctamente.');
@@ -214,8 +224,12 @@ class BusinessController extends Controller
             'name' => $business->name,
             'slug' => $business->slug,
             'address' => $business->address,
+            'province' => $business->province,
+            'municipality' => $business->municipality,
+            'street' => $business->street,
             'phone' => $business->phone,
             'default_currency' => $business->default_currency,
+            'policies' => array_merge($this->defaultBusinessPolicies(), (array) ($business->policies ?? [])),
             'owner_emails' => $business->owners
                 ->pluck('email')
                 ->filter()
@@ -225,6 +239,51 @@ class BusinessController extends Controller
             'current_user_role' => $business->pivot?->role,
             'membership_is_active' => $business->pivot ? (bool) $business->pivot->is_active : null,
             'is_current' => $business->id === $currentBusinessId,
+        ];
+    }
+
+    /**
+     * Build the policy payload shared with the mobile app through business_profile sync.
+     *
+     * @return array<string, mixed>
+     */
+    private function businessPoliciesFromRequest(StoreBusinessRequest $request, array $current = []): array
+    {
+        $base = array_merge($this->defaultBusinessPolicies(), $current);
+
+        return array_merge($base, [
+            'allowZeroStockSales' => $request->has('allow_zero_stock_sales')
+                ? $request->boolean('allow_zero_stock_sales')
+                : (bool) $base['allowZeroStockSales'],
+            'enableDebtManagement' => $request->has('enable_debt_management')
+                ? $request->boolean('enable_debt_management')
+                : (bool) $base['enableDebtManagement'],
+            'printSaleReceiptEnabled' => $request->has('print_sale_receipt_enabled')
+                ? $request->boolean('print_sale_receipt_enabled')
+                : (bool) $base['printSaleReceiptEnabled'],
+            'productCodePrefix' => $request->has('product_code_prefix')
+                ? $request->string('product_code_prefix')->toString()
+                : (string) $base['productCodePrefix'],
+            'productCodeDigits' => $request->has('product_code_digits')
+                ? max(0, (int) $request->integer('product_code_digits'))
+                : (int) $base['productCodeDigits'],
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function defaultBusinessPolicies(): array
+    {
+        return [
+            'allowZeroStockSales' => true,
+            'enableDebtManagement' => true,
+            'showPrice' => true,
+            'showStock' => true,
+            'showQrCodeGenerator' => true,
+            'printSaleReceiptEnabled' => false,
+            'productCodePrefix' => '',
+            'productCodeDigits' => 0,
         ];
     }
 
