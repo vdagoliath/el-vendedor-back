@@ -31,7 +31,6 @@ class StoreBusinessRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'slug' => ['nullable', 'string', 'max:255', Rule::unique('businesses', 'slug')->ignore($businessId)],
-            'address' => ['nullable', 'string', 'max:255'],
             'province' => ['nullable', 'string', 'max:255'],
             'municipality' => ['nullable', 'string', 'max:255'],
             'street' => ['nullable', 'string', 'max:255'],
@@ -55,7 +54,6 @@ class StoreBusinessRequest extends FormRequest
             'slug' => $this->filled('slug')
                 ? Str::slug(trim((string) $this->input('slug')))
                 : null,
-            'address' => $this->filled('address') ? trim((string) $this->input('address')) : null,
             'province' => $this->filled('province') ? trim((string) $this->input('province')) : null,
             'municipality' => $this->filled('municipality') ? trim((string) $this->input('municipality')) : null,
             'street' => $this->filled('street') ? trim((string) $this->input('street')) : null,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
 import { CircleCheckBig, Copy, KeyRound, PencilLine, Plus, Power, PowerOff, Store } from 'lucide-vue-next';
-import { ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import BusinessController from '@/actions/App/Http/Controllers/Backoffice/BusinessController';
 import CurrentBusinessController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessController';
 import LicensePricingController from '@/actions/App/Http/Controllers/Backoffice/LicensePricingController';
@@ -19,6 +19,13 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { index as backofficeBusinesses } from '@/routes/backoffice/businesses';
 import { index as backofficeTeam } from '@/routes/backoffice/team';
@@ -109,11 +116,189 @@ type Props = {
     };
 };
 
+type CubaProvince = {
+    name: string;
+    municipalities: string[];
+};
+
+type BusinessSelection = {
+    province: string;
+    municipality: string;
+    defaultCurrency: string;
+};
+
 defineProps<Props>();
 
 const page = usePage<{ auth: Auth; flash: Flash }>();
 const copiedToken = ref(false);
 const editingBusinessId = ref<number | null>(null);
+const currencyOptions = ['CUP', 'USD', 'EUR', 'MLC'];
+const cubaProvinces: CubaProvince[] = [
+    {
+        name: 'Pinar del Río',
+        municipalities: [
+            'Consolación del Sur', 'Guane', 'La Palma', 'Los Palacios', 'Mantua',
+            'Minas de Matahambre', 'Pinar del Río', 'San Juan y Martínez',
+            'San Luis', 'Sandino', 'Viñales',
+        ],
+    },
+    {
+        name: 'Artemisa',
+        municipalities: [
+            'Alquízar', 'Artemisa', 'Bauta', 'Caimito', 'Candelaria', 'Guanajay',
+            'Güira de Melena', 'Mariel', 'San Antonio de los Baños',
+            'San Cristóbal', 'Bahía Honda',
+        ],
+    },
+    {
+        name: 'La Habana',
+        municipalities: [
+            'Arroyo Naranjo', 'Boyeros', 'Centro Habana', 'Cerro', 'Cotorro',
+            'Diez de Octubre', 'Guanabacoa', 'Habana del Este', 'Habana Vieja',
+            'La Lisa', 'Marianao', 'Playa', 'Plaza de la Revolución', 'Regla',
+            'San Miguel del Padrón',
+        ],
+    },
+    {
+        name: 'Mayabeque',
+        municipalities: [
+            'Batabanó', 'Bejucal', 'Güines', 'Jaruco', 'Madruga', 'Melena del Sur',
+            'Nueva Paz', 'Quivicán', 'San José de las Lajas', 'San Nicolás',
+            'Santa Cruz del Norte',
+        ],
+    },
+    {
+        name: 'Matanzas',
+        municipalities: [
+            'Calimete', 'Cárdenas', 'Ciénaga de Zapata', 'Colón', 'Jagüey Grande',
+            'Jovellanos', 'Limonar', 'Los Arabos', 'Martí', 'Matanzas', 'Pedro Betancourt',
+            'Perico', 'Unión de Reyes',
+        ],
+    },
+    {
+        name: 'Cienfuegos',
+        municipalities: [
+            'Abreus', 'Aguada de Pasajeros', 'Cienfuegos', 'Cruces', 'Cumanayagua',
+            'Lajas', 'Palmira', 'Rodas',
+        ],
+    },
+    {
+        name: 'Villa Clara',
+        municipalities: [
+            'Caibarién', 'Camajuaní', 'Cifuentes', 'Corralillo', 'Encrucijada',
+            'Manicaragua', 'Placetas', 'Quemado de Güines', 'Ranchuelo', 'Remedios',
+            'Sagua la Grande', 'Santa Clara', 'Santo Domingo',
+        ],
+    },
+    {
+        name: 'Sancti Spíritus',
+        municipalities: [
+            'Cabaiguán', 'Fomento', 'Jatibonico', 'La Sierpe', 'Sancti Spíritus',
+            'Taguasco', 'Trinidad', 'Yaguajay',
+        ],
+    },
+    {
+        name: 'Ciego de Ávila',
+        municipalities: [
+            'Baraguá', 'Bolivia', 'Chambas', 'Ciego de Ávila', 'Ciro Redondo',
+            'Florencia', 'Majagua', 'Morón', 'Primero de Enero', 'Venezuela',
+        ],
+    },
+    {
+        name: 'Camagüey',
+        municipalities: [
+            'Camagüey', 'Carlos Manuel de Céspedes', 'Esmeralda', 'Florida',
+            'Guáimaro', 'Jimaguayú', 'Minas', 'Najasa', 'Nuevitas', 'Santa Cruz del Sur',
+            'Sibanicú', 'Sierra de Cubitas', 'Vertientes',
+        ],
+    },
+    {
+        name: 'Las Tunas',
+        municipalities: [
+            'Amancio', 'Colombia', 'Jesús Menéndez', 'Jobabo', 'Las Tunas',
+            'Majibacoa', 'Manatí', 'Puerto Padre',
+        ],
+    },
+    {
+        name: 'Holguín',
+        municipalities: [
+            'Antilla', 'Báguanos', 'Banes', 'Cacocum', 'Calixto García', 'Cueto',
+            'Frank País', 'Gibara', 'Holguín', 'Mayarí', 'Moa', 'Rafael Freyre',
+            'Sagua de Tánamo', 'Urbano Noris',
+        ],
+    },
+    {
+        name: 'Granma',
+        municipalities: [
+            'Bartolomé Masó', 'Bayamo', 'Buey Arriba', 'Campechuela', 'Cauto Cristo',
+            'Guisa', 'Jiguaní', 'Manzanillo', 'Media Luna', 'Niquero', 'Pilón',
+            'Río Cauto', 'Yara',
+        ],
+    },
+    {
+        name: 'Santiago de Cuba',
+        municipalities: [
+            'Contramaestre', 'Guamá', 'Mella', 'Palma Soriano', 'San Luis',
+            'Santiago de Cuba', 'Segundo Frente', 'Songo-La Maya', 'Tercer Frente',
+        ],
+    },
+    {
+        name: 'Guantánamo',
+        municipalities: [
+            'Baracoa', 'Caimanera', 'El Salvador', 'Guantánamo', 'Imías', 'Maisí',
+            'Manuel Tames', 'Niceto Pérez', 'San Antonio del Sur', 'Yateras',
+        ],
+    },
+    {
+        name: 'Isla de la Juventud',
+        municipalities: ['Isla de la Juventud'],
+    },
+];
+const createBusinessSelection = reactive<BusinessSelection>({
+    province: '',
+    municipality: '',
+    defaultCurrency: 'CUP',
+});
+const editBusinessSelections = reactive<Record<number, BusinessSelection>>({});
+
+const selectValue = (value: unknown) => String(value ?? '');
+
+const municipalitiesForProvince = (provinceName: string) => {
+    return cubaProvinces.find((province) => province.name === provinceName)?.municipalities ?? [];
+};
+
+const createMunicipalities = computed(() => municipalitiesForProvince(createBusinessSelection.province));
+
+const editSelectionFor = (business: BusinessItem) => {
+    editBusinessSelections[business.id] ??= {
+        province: business.province ?? '',
+        municipality: business.municipality ?? '',
+        defaultCurrency: business.default_currency || 'CUP',
+    };
+
+    return editBusinessSelections[business.id];
+};
+
+const editMunicipalitiesFor = (business: BusinessItem) => municipalitiesForProvince(editSelectionFor(business).province);
+
+const updateCreateProvince = (value: unknown) => {
+    createBusinessSelection.province = selectValue(value);
+    createBusinessSelection.municipality = '';
+};
+
+const updateEditProvince = (business: BusinessItem, value: unknown) => {
+    const selection = editSelectionFor(business);
+    selection.province = selectValue(value);
+    selection.municipality = '';
+};
+
+const updateEditMunicipality = (business: BusinessItem, value: unknown) => {
+    editSelectionFor(business).municipality = selectValue(value);
+};
+
+const updateEditCurrency = (business: BusinessItem, value: unknown) => {
+    editSelectionFor(business).defaultCurrency = selectValue(value);
+};
 
 const toggleEdit = (businessId: number) => {
     editingBusinessId.value = editingBusinessId.value === businessId ? null : businessId;
@@ -237,8 +422,8 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <p v-if="business.phone">
                                             Teléfono: {{ business.phone }}
                                         </p>
-                                        <p v-if="business.address">
-                                            Dirección: {{ business.address }}
+                                        <p v-if="business.street">
+                                            Dirección: {{ business.street }}
                                         </p>
                                         <p v-if="business.province || business.municipality">
                                             Ubicación: {{ [business.municipality, business.province].filter(Boolean).join(', ') }}
@@ -363,20 +548,61 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     </div>
                                     <div class="grid gap-2">
                                         <Label :for="`edit-province-${business.id}`">Provincia</Label>
-                                        <Input
-                                            :id="`edit-province-${business.id}`"
+                                        <input
+                                            type="hidden"
                                             name="province"
-                                            :default-value="business.province ?? ''"
+                                            :value="editSelectionFor(business).province"
                                         />
+                                        <Select
+                                            :model-value="editSelectionFor(business).province"
+                                            @update:model-value="updateEditProvince(business, $event)"
+                                        >
+                                            <SelectTrigger
+                                                :id="`edit-province-${business.id}`"
+                                                class="w-full"
+                                            >
+                                                <SelectValue placeholder="Selecciona una provincia" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-for="province in cubaProvinces"
+                                                    :key="province.name"
+                                                    :value="province.name"
+                                                >
+                                                    {{ province.name }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                         <InputError :message="errors.province" />
                                     </div>
                                     <div class="grid gap-2">
                                         <Label :for="`edit-municipality-${business.id}`">Municipio</Label>
-                                        <Input
-                                            :id="`edit-municipality-${business.id}`"
+                                        <input
+                                            type="hidden"
                                             name="municipality"
-                                            :default-value="business.municipality ?? ''"
+                                            :value="editSelectionFor(business).municipality"
                                         />
+                                        <Select
+                                            :model-value="editSelectionFor(business).municipality"
+                                            :disabled="!editSelectionFor(business).province"
+                                            @update:model-value="updateEditMunicipality(business, $event)"
+                                        >
+                                            <SelectTrigger
+                                                :id="`edit-municipality-${business.id}`"
+                                                class="w-full"
+                                            >
+                                                <SelectValue placeholder="Selecciona un municipio" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-for="municipality in editMunicipalitiesFor(business)"
+                                                    :key="municipality"
+                                                    :value="municipality"
+                                                >
+                                                    {{ municipality }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                         <InputError :message="errors.municipality" />
                                     </div>
                                     <div class="grid gap-2 md:col-span-2">
@@ -384,18 +610,9 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <Input
                                             :id="`edit-street-${business.id}`"
                                             name="street"
-                                            :default-value="business.street ?? business.address ?? ''"
+                                            :default-value="business.street ?? ''"
                                         />
                                         <InputError :message="errors.street" />
-                                    </div>
-                                    <div class="grid gap-2 md:col-span-2">
-                                        <Label :for="`edit-address-${business.id}`">Dirección legada</Label>
-                                        <Input
-                                            :id="`edit-address-${business.id}`"
-                                            name="address"
-                                            :default-value="business.address ?? ''"
-                                        />
-                                        <InputError :message="errors.address" />
                                     </div>
                                     <div class="grid gap-2">
                                         <Label :for="`edit-phone-${business.id}`">Teléfono</Label>
@@ -408,12 +625,31 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     </div>
                                     <div class="grid gap-2">
                                         <Label :for="`edit-currency-${business.id}`">Moneda</Label>
-                                        <Input
-                                            :id="`edit-currency-${business.id}`"
+                                        <input
+                                            type="hidden"
                                             name="default_currency"
-                                            required
-                                            :default-value="business.default_currency"
+                                            :value="editSelectionFor(business).defaultCurrency"
                                         />
+                                        <Select
+                                            :model-value="editSelectionFor(business).defaultCurrency"
+                                            @update:model-value="updateEditCurrency(business, $event)"
+                                        >
+                                            <SelectTrigger
+                                                :id="`edit-currency-${business.id}`"
+                                                class="w-full"
+                                            >
+                                                <SelectValue placeholder="Selecciona una moneda" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-for="currency in currencyOptions"
+                                                    :key="currency"
+                                                    :value="currency"
+                                                >
+                                                    {{ currency }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                         <InputError :message="errors.default_currency" />
                                     </div>
                                 </div>
@@ -504,21 +740,56 @@ const breadcrumbs: BreadcrumbItem[] = [
 
                                 <div class="grid gap-2">
                                     <Label for="province">Provincia</Label>
-                                    <Input
-                                        id="province"
+                                    <input
+                                        type="hidden"
                                         name="province"
-                                        placeholder="La Habana"
+                                        :value="createBusinessSelection.province"
                                     />
+                                    <Select
+                                        :model-value="createBusinessSelection.province"
+                                        @update:model-value="updateCreateProvince"
+                                    >
+                                        <SelectTrigger id="province" class="w-full">
+                                            <SelectValue placeholder="Selecciona una provincia" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="province in cubaProvinces"
+                                                :key="province.name"
+                                                :value="province.name"
+                                            >
+                                                {{ province.name }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                     <InputError :message="errors.province" />
                                 </div>
 
                                 <div class="grid gap-2">
                                     <Label for="municipality">Municipio</Label>
-                                    <Input
-                                        id="municipality"
+                                    <input
+                                        type="hidden"
                                         name="municipality"
-                                        placeholder="Plaza de la Revolución"
+                                        :value="createBusinessSelection.municipality"
                                     />
+                                    <Select
+                                        :model-value="createBusinessSelection.municipality"
+                                        :disabled="!createBusinessSelection.province"
+                                        @update:model-value="createBusinessSelection.municipality = selectValue($event)"
+                                    >
+                                        <SelectTrigger id="municipality" class="w-full">
+                                            <SelectValue placeholder="Selecciona un municipio" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="municipality in createMunicipalities"
+                                                :key="municipality"
+                                                :value="municipality"
+                                            >
+                                                {{ municipality }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                     <InputError :message="errors.municipality" />
                                 </div>
 
@@ -533,16 +804,6 @@ const breadcrumbs: BreadcrumbItem[] = [
                                 </div>
 
                                 <div class="grid gap-2">
-                                    <Label for="address">Dirección legada</Label>
-                                    <Input
-                                        id="address"
-                                        name="address"
-                                        placeholder="Calle 10 #123 entre A y B"
-                                    />
-                                    <InputError :message="errors.address" />
-                                </div>
-
-                                <div class="grid gap-2">
                                     <Label for="phone">Teléfono</Label>
                                     <Input
                                         id="phone"
@@ -554,13 +815,28 @@ const breadcrumbs: BreadcrumbItem[] = [
 
                                 <div class="grid gap-2">
                                     <Label for="default_currency">Moneda</Label>
-                                    <Input
-                                        id="default_currency"
+                                    <input
+                                        type="hidden"
                                         name="default_currency"
-                                        required
-                                        default-value="CUP"
-                                        placeholder="CUP"
+                                        :value="createBusinessSelection.defaultCurrency"
                                     />
+                                    <Select
+                                        :model-value="createBusinessSelection.defaultCurrency"
+                                        @update:model-value="createBusinessSelection.defaultCurrency = selectValue($event)"
+                                    >
+                                        <SelectTrigger id="default_currency" class="w-full">
+                                            <SelectValue placeholder="Selecciona una moneda" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="currency in currencyOptions"
+                                                :key="currency"
+                                                :value="currency"
+                                            >
+                                                {{ currency }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                     <InputError :message="errors.default_currency" />
                                 </div>
 
