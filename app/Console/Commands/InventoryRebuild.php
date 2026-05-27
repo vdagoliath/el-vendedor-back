@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Business;
 use App\Models\Product;
+use App\Models\ProductBreakdown;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\StockAdjustment;
@@ -16,7 +17,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * Reconstruye `stock_projections` para uno o varios negocios desde el log de
  * operaciones inmutables (sales, purchases, stock_movements,
- * stock_adjustments) más el seed de Product.stock_by_warehouse.
+ * stock_adjustments, product_breakdowns) más el seed de Product.stock_by_warehouse.
  *
  * El procedimiento:
  *   1. Borra todas las filas de proyección del business.
@@ -170,13 +171,33 @@ class InventoryRebuild extends Command
                     }
                 });
 
+            $appliedBreakdowns = 0;
+            ProductBreakdown::query()
+                ->withTrashed()
+                ->where('business_id', $business->id)
+                ->orderBy('breakdown_at')
+                ->orderBy('id')
+                ->chunk(200, function ($breakdowns) use ($business, $projector, &$appliedBreakdowns, $dryRun): void {
+                    foreach ($breakdowns as $breakdown) {
+                        if ($breakdown->trashed()) {
+                            continue;
+                        }
+                        if (! $dryRun) {
+                            $projector->applyDelta($business, $breakdown->source_product_external_id, $breakdown->warehouse_external_id, -(float) $breakdown->source_quantity, 'rebuild:breakdown:'.$breakdown->external_id);
+                            $projector->applyDelta($business, $breakdown->target_product_external_id, $breakdown->warehouse_external_id, +(float) $breakdown->target_quantity, 'rebuild:breakdown:'.$breakdown->external_id);
+                        }
+                        $appliedBreakdowns++;
+                    }
+                });
+
             $this->line(sprintf(
-                '  seeded=%d sales=%d purchases=%d movements=%d adjustments=%d',
+                '  seeded=%d sales=%d purchases=%d movements=%d adjustments=%d breakdowns=%d',
                 $seedRows,
                 $appliedSales,
                 $appliedPurchases,
                 $appliedMovements,
-                $appliedAdjustments
+                $appliedAdjustments,
+                $appliedBreakdowns
             ));
         });
     }

@@ -13,6 +13,7 @@ use App\Models\Employee;
 use App\Models\Expense;
 use App\Models\PointOfSale;
 use App\Models\Product;
+use App\Models\ProductBreakdown;
 use App\Models\ProductLoss;
 use App\Models\Purchase;
 use App\Models\Sale;
@@ -66,6 +67,7 @@ class SyncPullController extends Controller
         'stock_movements',
         'stock_adjustments',
         'product_losses',
+        'product_breakdowns',
         'sales',
         'purchases',
         'expenses',
@@ -275,6 +277,7 @@ class SyncPullController extends Controller
             'stock_movements' => ['table' => 'stock_movements', 'where' => 'business_id', 'value' => $business->id],
             'stock_adjustments' => ['table' => 'stock_adjustments', 'where' => 'business_id', 'value' => $business->id],
             'product_losses' => ['table' => 'product_losses', 'where' => 'business_id', 'value' => $business->id],
+            'product_breakdowns' => ['table' => 'product_breakdowns', 'where' => 'business_id', 'value' => $business->id],
             'sales' => ['table' => 'sales', 'where' => 'business_id', 'value' => $business->id],
             'purchases' => ['table' => 'purchases', 'where' => 'business_id', 'value' => $business->id],
             'expenses' => ['table' => 'expenses', 'where' => 'business_id', 'value' => $business->id],
@@ -372,6 +375,7 @@ class SyncPullController extends Controller
             'stock_movements' => StockMovement::class,
             'stock_adjustments' => StockAdjustment::class,
             'product_losses' => ProductLoss::class,
+            'product_breakdowns' => ProductBreakdown::class,
             'sales' => Sale::class,
             'purchases' => Purchase::class,
             'expenses' => Expense::class,
@@ -438,6 +442,7 @@ class SyncPullController extends Controller
             'stock_movements' => $this->toStockMovementPayload($row),
             'stock_adjustments' => $this->toStockAdjustmentPayload($row),
             'product_losses' => $this->toProductLossPayload($row),
+            'product_breakdowns' => $this->toProductBreakdownPayload($row),
             'sales' => $this->toSalePayload($row),
             'purchases' => $this->toPurchasePayload($row),
             'expenses' => $this->toExpensePayload($row),
@@ -512,6 +517,7 @@ class SyncPullController extends Controller
             'stock_movements' => $this->getMaterializedEntityChanges(StockMovement::class, 'stock_movements', $business, $cursor, $responseBoundary, $limit, fn (StockMovement $m) => $this->toStockMovementPayload($m)),
             'stock_adjustments' => $this->getMaterializedEntityChanges(StockAdjustment::class, 'stock_adjustments', $business, $cursor, $responseBoundary, $limit, fn (StockAdjustment $m) => $this->toStockAdjustmentPayload($m)),
             'product_losses' => $this->getMaterializedEntityChanges(ProductLoss::class, 'product_losses', $business, $cursor, $responseBoundary, $limit, fn (ProductLoss $m) => $this->toProductLossPayload($m)),
+            'product_breakdowns' => $this->getMaterializedEntityChanges(ProductBreakdown::class, 'product_breakdowns', $business, $cursor, $responseBoundary, $limit, fn (ProductBreakdown $m) => $this->toProductBreakdownPayload($m)),
             'sales' => $this->getSaleChanges($business, $cursor, $responseBoundary, $limit),
             'purchases' => $this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $cursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)),
             'expenses' => $this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $cursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)),
@@ -766,6 +772,13 @@ class SyncPullController extends Controller
             'unitOfMeasurement' => $product->unit_of_measurement,
             'unitOfMeasurementPurchase' => $product->unit_of_measurement_purchase,
             'stockByWarehouse' => $product->stock_by_warehouse ?? [],
+            'hasRecipe' => (bool) $product->has_recipe,
+            'recipeItems' => $product->recipe_items ?? [],
+            'canBreakdown' => (bool) $product->can_breakdown,
+            'breakdownTargetProductId' => $product->breakdown_target_product_external_id,
+            'breakdownTargetQuantity' => $product->breakdown_target_quantity !== null ? (float) $product->breakdown_target_quantity : null,
+            'breakdownTargetTitleSnapshot' => $product->breakdown_target_title_snapshot,
+            'breakdownTargetUnitSymbolSnapshot' => $product->breakdown_target_unit_symbol_snapshot,
             '_stockSeed' => true,
             'deleted_at' => $product->deleted_at?->toIso8601String(),
         ];
@@ -1185,6 +1198,29 @@ class SyncPullController extends Controller
             'previousQuantity' => $l->previous_quantity !== null ? (float) $l->previous_quantity : null,
             'timestamp' => $l->loss_at?->toIso8601String(),
             'deleted_at' => $l->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toProductBreakdownPayload(ProductBreakdown $b): array
+    {
+        return [
+            'sourceProductId' => $b->source_product_external_id,
+            'targetProductId' => $b->target_product_external_id,
+            'warehouseId' => $b->warehouse_external_id,
+            'sourceQuantity' => (float) $b->source_quantity,
+            'targetQuantity' => (float) $b->target_quantity,
+            'conversionRatio' => (float) $b->conversion_ratio,
+            'sourceTitleSnapshot' => $b->source_title_snapshot,
+            'targetTitleSnapshot' => $b->target_title_snapshot,
+            'sourceUnitSymbolSnapshot' => $b->source_unit_symbol_snapshot,
+            'targetUnitSymbolSnapshot' => $b->target_unit_symbol_snapshot,
+            'sourceUnitCost' => $b->source_unit_cost !== null ? (float) $b->source_unit_cost : null,
+            'targetUnitCost' => $b->target_unit_cost !== null ? (float) $b->target_unit_cost : null,
+            'previousSourceQuantity' => $b->previous_source_quantity !== null ? (float) $b->previous_source_quantity : null,
+            'previousTargetQuantity' => $b->previous_target_quantity !== null ? (float) $b->previous_target_quantity : null,
+            'timestamp' => $b->breakdown_at?->toIso8601String(),
+            'deleted_at' => $b->deleted_at?->toIso8601String(),
         ];
     }
 }

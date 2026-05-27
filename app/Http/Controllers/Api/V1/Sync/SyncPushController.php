@@ -42,6 +42,7 @@ class SyncPushController extends Controller
         'stock_movements',
         'stock_adjustments',
         'product_losses',
+        'product_breakdowns',
     ];
 
     public function __construct(
@@ -406,7 +407,7 @@ class SyncPushController extends Controller
         }
 
         // El stock se sincroniza por eventos discretos (sales, purchases,
-        // stock_movements, stock_adjustments). Solo aceptamos el snapshot
+        // stock_movements, stock_adjustments, product_breakdowns). Solo aceptamos el snapshot
         // `stockByWarehouse` cuando el cliente lo marca explícitamente como
         // seed inicial (`_stockSeed: true`). Para todos los demás updates
         // del producto preservamos el stock existente; así un rename o
@@ -432,6 +433,13 @@ class SyncPushController extends Controller
             'unit_of_measurement' => is_array($payload['unitOfMeasurement'] ?? null) ? $payload['unitOfMeasurement'] : null,
             'unit_of_measurement_purchase' => is_array($payload['unitOfMeasurementPurchase'] ?? null) ? $payload['unitOfMeasurementPurchase'] : null,
             'stock_by_warehouse' => $stockByWarehouse,
+            'has_recipe' => (bool) ($payload['hasRecipe'] ?? false),
+            'recipe_items' => is_array($payload['recipeItems'] ?? null) ? $payload['recipeItems'] : [],
+            'can_breakdown' => (bool) ($payload['canBreakdown'] ?? false),
+            'breakdown_target_product_external_id' => $this->normalizeNullableString($payload['breakdownTargetProductId'] ?? null),
+            'breakdown_target_quantity' => $this->normalizeNullableDecimal($payload['breakdownTargetQuantity'] ?? null),
+            'breakdown_target_title_snapshot' => $this->normalizeNullableString($payload['breakdownTargetTitleSnapshot'] ?? null),
+            'breakdown_target_unit_symbol_snapshot' => $this->normalizeNullableString($payload['breakdownTargetUnitSymbolSnapshot'] ?? null),
             'source_created_at' => $product->source_created_at ?? $occurredAt ?? now(),
             'source_updated_at' => $occurredAt ?? now(),
             'last_received_event_id' => $event->event_id,
@@ -659,6 +667,13 @@ class SyncPushController extends Controller
             'unitOfMeasurement' => $product->unit_of_measurement,
             'unitOfMeasurementPurchase' => $product->unit_of_measurement_purchase,
             'stockByWarehouse' => $product->stock_by_warehouse ?? [],
+            'hasRecipe' => (bool) $product->has_recipe,
+            'recipeItems' => $product->recipe_items ?? [],
+            'canBreakdown' => (bool) $product->can_breakdown,
+            'breakdownTargetProductId' => $product->breakdown_target_product_external_id,
+            'breakdownTargetQuantity' => $product->breakdown_target_quantity !== null ? (float) $product->breakdown_target_quantity : null,
+            'breakdownTargetTitleSnapshot' => $product->breakdown_target_title_snapshot,
+            'breakdownTargetUnitSymbolSnapshot' => $product->breakdown_target_unit_symbol_snapshot,
             'deleted_at' => $product->deleted_at?->toIso8601String(),
         ];
     }

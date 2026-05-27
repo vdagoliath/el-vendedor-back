@@ -4,6 +4,7 @@ namespace App\Support\Sync;
 
 use App\Models\Business;
 use App\Models\Expense;
+use App\Models\ProductBreakdown;
 use App\Models\ProductLoss;
 use App\Models\Purchase;
 use App\Models\PurchaseLine;
@@ -33,6 +34,7 @@ class SyncTransactionApplier
             'stock_movements' => $this->applyStockMovement($business, $event, $change),
             'stock_adjustments' => $this->applyStockAdjustment($business, $event, $change),
             'product_losses' => $this->applyProductLoss($business, $event, $change),
+            'product_breakdowns' => $this->applyProductBreakdown($business, $event, $change),
             default => false,
         };
     }
@@ -647,6 +649,139 @@ class SyncTransactionApplier
                 $productExternalId,
                 $warehouseId,
                 -(float) $quantity,
+                $event->event_id
+            );
+        }
+
+        return true;
+    }
+
+    private function applyProductBreakdown(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        $entityId = $change['entity_id'];
+        $operation = $change['operation'];
+        $occurredAt = $this->parseDate($change['occurred_at'] ?? null);
+
+        /** @var ProductBreakdown|null $breakdown */
+        $breakdown = ProductBreakdown::query()
+            ->withTrashed()
+            ->where('business_id', $business->id)
+            ->where('external_id', $entityId)
+            ->first();
+
+        if ($operation === 'delete') {
+            if ($breakdown && ! $breakdown->trashed()) {
+                $this->projector->applyDelta(
+                    $business,
+                    $breakdown->source_product_external_id,
+                    $breakdown->warehouse_external_id,
+                    +(float) $breakdown->source_quantity,
+                    $event->event_id
+                );
+                $this->projector->applyDelta(
+                    $business,
+                    $breakdown->target_product_external_id,
+                    $breakdown->warehouse_external_id,
+                    -(float) $breakdown->target_quantity,
+                    $event->event_id
+                );
+
+                $breakdown->forceFill([
+                    'last_received_event_id' => $event->event_id,
+                    'source_updated_at' => $occurredAt ?? now(),
+                ])->save();
+                $breakdown->delete();
+            }
+
+            return true;
+        }
+
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+
+        $sourceProductId = $this->nullStr($payload['sourceProductId'] ?? null);
+        $targetProductId = $this->nullStr($payload['targetProductId'] ?? null);
+        $warehouseId = $this->nullStr($payload['warehouseId'] ?? null);
+
+        if ($sourceProductId === null || $targetProductId === null || $warehouseId === null) {
+            throw new \RuntimeException('El desglose sincronizado no tiene productos o almacén válido.');
+        }
+
+        if ($sourceProductId === $targetProductId) {
+            throw new \RuntimeException('El desglose sincronizado no puede usar el mismo producto como origen y destino.');
+        }
+
+        $sourceQuantity = $this->decimal($payload['sourceQuantity'] ?? 0);
+        $targetQuantity = $this->decimal($payload['targetQuantity'] ?? 0);
+        $conversionRatio = $this->decimal($payload['conversionRatio'] ?? 0);
+
+        if ((float) $sourceQuantity <= 0.0 || (float) $targetQuantity <= 0.0) {
+            throw new \RuntimeException('El desglose sincronizado debe tener cantidades positivas.');
+        }
+
+        if ((float) $conversionRatio <= 0.0) {
+            $conversionRatio = (float) $targetQuantity / (float) $sourceQuantity;
+        }
+
+        $isNew = $breakdown === null;
+
+        if (! $breakdown) {
+            $breakdown = new ProductBreakdown([
+                'business_id' => $business->id,
+                'external_id' => $entityId,
+            ]);
+        }
+
+        $breakdown->fill([
+            'business_id' => $business->id,
+            'external_id' => $entityId,
+            'source_product_external_id' => $sourceProductId,
+            'target_product_external_id' => $targetProductId,
+            'warehouse_external_id' => $warehouseId,
+            'source_quantity' => $sourceQuantity,
+            'target_quantity' => $targetQuantity,
+            'conversion_ratio' => $conversionRatio,
+            'source_title_snapshot' => $this->nullStr($payload['sourceTitleSnapshot'] ?? null),
+            'target_title_snapshot' => $this->nullStr($payload['targetTitleSnapshot'] ?? null),
+            'source_unit_symbol_snapshot' => $this->nullStr($payload['sourceUnitSymbolSnapshot'] ?? null),
+            'target_unit_symbol_snapshot' => $this->nullStr($payload['targetUnitSymbolSnapshot'] ?? null),
+            'source_unit_cost' => isset($payload['sourceUnitCost']) && is_numeric($payload['sourceUnitCost'])
+                ? $this->decimal($payload['sourceUnitCost'])
+                : null,
+            'target_unit_cost' => isset($payload['targetUnitCost']) && is_numeric($payload['targetUnitCost'])
+                ? $this->decimal($payload['targetUnitCost'])
+                : null,
+            'previous_source_quantity' => isset($payload['previousSourceQuantity']) && is_numeric($payload['previousSourceQuantity'])
+                ? $this->decimal($payload['previousSourceQuantity'])
+                : null,
+            'previous_target_quantity' => isset($payload['previousTargetQuantity']) && is_numeric($payload['previousTargetQuantity'])
+                ? $this->decimal($payload['previousTargetQuantity'])
+                : null,
+            'breakdown_at' => $this->parseDate($payload['timestamp'] ?? null) ?? $occurredAt ?? now(),
+            'source_created_at' => $breakdown->source_created_at ?? $occurredAt ?? now(),
+            'source_updated_at' => $occurredAt ?? now(),
+            'last_received_event_id' => $event->event_id,
+        ]);
+
+        $wasTrashed = $breakdown->trashed();
+        $breakdown->save();
+
+        if ($wasTrashed) {
+            $breakdown->restore();
+        }
+
+        if ($isNew || $wasTrashed) {
+            $this->projector->applyDelta(
+                $business,
+                $sourceProductId,
+                $warehouseId,
+                -(float) $sourceQuantity,
+                $event->event_id
+            );
+            $this->projector->applyDelta(
+                $business,
+                $targetProductId,
+                $warehouseId,
+                +(float) $targetQuantity,
                 $event->event_id
             );
         }

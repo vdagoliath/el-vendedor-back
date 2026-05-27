@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
  * Mantiene `stock_projections` aplicando deltas atómicos por (product, warehouse).
  *
  * Diseño:
- *   - El log de operaciones (sales, purchases, stock_movements, stock_adjustments)
+ *   - El log de operaciones (sales, purchases, stock_movements, stock_adjustments, product_breakdowns)
  *     es la fuente de verdad. La proyección es una vista materializada
  *     reconstruible por completo desde ese log con `inventory:rebuild`.
  *   - Cada `applyDelta` corre en una transacción y bloquea la fila

@@ -283,6 +283,126 @@ test('a stock adjustment applies its change_quantity', function () {
     expect((float) $row->qty)->toBe(100.0);
 });
 
+test('a product breakdown subtracts source stock and adds target stock', function () {
+    StockProjection::query()->create([
+        'business_id' => $this->business->id,
+        'product_external_id' => 'box-cigars',
+        'warehouse_external_id' => 'wh-1',
+        'qty' => 3,
+    ]);
+
+    StockProjection::query()->create([
+        'business_id' => $this->business->id,
+        'product_external_id' => 'single-cigar',
+        'warehouse_external_id' => 'wh-1',
+        'qty' => 5,
+    ]);
+
+    pushChanges($this, $this->ownerToken, 'device-projection-breakdown', [[
+        'event_id' => 'evt-breakdown-1',
+        'entity_type' => 'product_breakdowns',
+        'entity_id' => 'breakdown-1',
+        'operation' => 'create',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'sourceProductId' => 'box-cigars',
+            'targetProductId' => 'single-cigar',
+            'warehouseId' => 'wh-1',
+            'sourceQuantity' => 1,
+            'targetQuantity' => 20,
+            'conversionRatio' => 20,
+            'timestamp' => now()->toIso8601String(),
+        ],
+    ]])->assertAccepted();
+
+    $box = StockProjection::query()->where('product_external_id', 'box-cigars')->where('warehouse_external_id', 'wh-1')->firstOrFail();
+    $single = StockProjection::query()->where('product_external_id', 'single-cigar')->where('warehouse_external_id', 'wh-1')->firstOrFail();
+
+    expect((float) $box->qty)->toBe(2.0)
+        ->and((float) $single->qty)->toBe(25.0);
+});
+
+test('a product upsert persists breakdown configuration', function () {
+    pushChanges($this, $this->ownerToken, 'device-projection-breakdown-config', [[
+        'event_id' => 'evt-product-breakdown-config',
+        'entity_type' => 'products',
+        'entity_id' => 'box-eggs',
+        'operation' => 'create',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'code' => 'EGG-BOX',
+            'title' => 'Carton de huevos',
+            'regular_price' => 300,
+            'purchase_price' => 240,
+            'canBreakdown' => true,
+            'breakdownTargetProductId' => 'single-egg',
+            'breakdownTargetQuantity' => 30,
+            'breakdownTargetTitleSnapshot' => 'Huevo suelto',
+            'breakdownTargetUnitSymbolSnapshot' => 'u',
+        ],
+    ]])->assertAccepted();
+
+    $product = Product::query()->where('external_id', 'box-eggs')->firstOrFail();
+
+    expect($product->can_breakdown)->toBeTrue()
+        ->and($product->breakdown_target_product_external_id)->toBe('single-egg')
+        ->and((float) $product->breakdown_target_quantity)->toBe(30.0)
+        ->and($product->breakdown_target_title_snapshot)->toBe('Huevo suelto')
+        ->and($product->breakdown_target_unit_symbol_snapshot)->toBe('u');
+});
+
+test('a product upsert persists and pulls recipe configuration', function () {
+    pushChanges($this, $this->ownerToken, 'device-projection-recipe-config', [[
+        'event_id' => 'evt-product-recipe-config',
+        'entity_type' => 'products',
+        'entity_id' => 'prepared-coffee',
+        'operation' => 'create',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'code' => 'CAF-PREP',
+            'title' => 'Cafe preparado',
+            'regular_price' => 80,
+            'purchase_price' => 20,
+            'hasRecipe' => true,
+            'recipeItems' => [
+                [
+                    'componentProductId' => 'coffee-beans',
+                    'quantity' => 0.02,
+                    'componentTitleSnapshot' => 'Cafe molido',
+                    'componentUnitSymbolSnapshot' => 'kg',
+                ],
+                [
+                    'componentProductId' => 'sugar',
+                    'quantity' => 0.01,
+                    'componentTitleSnapshot' => 'Azucar',
+                    'componentUnitSymbolSnapshot' => 'kg',
+                ],
+            ],
+        ],
+    ]])->assertAccepted();
+
+    $product = Product::query()->where('external_id', 'prepared-coffee')->firstOrFail();
+
+    expect($product->has_recipe)->toBeTrue()
+        ->and($product->recipe_items)->toHaveCount(2)
+        ->and($product->recipe_items[0]['componentProductId'])->toBe('coffee-beans');
+
+    $pull = $this->withToken($this->ownerToken)
+        ->withHeaders(projectionSyncHeaders())
+        ->getJson('/api/v1/sync/pull?device_id=device-pull-recipe&cursor=v3:0');
+
+    $pull->assertOk();
+
+    $productChange = collect($pull->json('changes'))
+        ->first(fn (array $change): bool => ($change['entity_type'] ?? null) === 'products'
+            && ($change['entity_id'] ?? null) === 'prepared-coffee');
+
+    expect($productChange)->not->toBeNull()
+        ->and($productChange['payload']['hasRecipe'])->toBeTrue()
+        ->and($productChange['payload']['recipeItems'])->toHaveCount(2)
+        ->and($productChange['payload']['recipeItems'][1]['componentProductId'])->toBe('sugar');
+});
+
 test('replaying the same sale event does not double-count', function () {
     StockProjection::query()->create([
         'business_id' => $this->business->id,

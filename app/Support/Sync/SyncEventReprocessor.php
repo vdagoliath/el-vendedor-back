@@ -152,7 +152,7 @@ final class SyncEventReprocessor
         // Mismo criterio que en SyncPushController::applyProductChange:
         // sólo aceptamos `stockByWarehouse` cuando el push lo marca como seed
         // inicial. En reprocesos, eso permite no tocar el stock acumulado por
-        // eventos discretos (sales, purchases, stock_movements, stock_adjustments).
+        // eventos discretos (sales, purchases, stock_movements, stock_adjustments, product_breakdowns).
         $stockByWarehouse = $product->stock_by_warehouse ?? [];
         $isStockSeed = ($payload['_stockSeed'] ?? false) === true;
         if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
@@ -174,6 +174,13 @@ final class SyncEventReprocessor
             'unit_of_measurement' => is_array($payload['unitOfMeasurement'] ?? null) ? $payload['unitOfMeasurement'] : null,
             'unit_of_measurement_purchase' => is_array($payload['unitOfMeasurementPurchase'] ?? null) ? $payload['unitOfMeasurementPurchase'] : null,
             'stock_by_warehouse' => $stockByWarehouse,
+            'has_recipe' => (bool) ($payload['hasRecipe'] ?? false),
+            'recipe_items' => is_array($payload['recipeItems'] ?? null) ? $payload['recipeItems'] : [],
+            'can_breakdown' => (bool) ($payload['canBreakdown'] ?? false),
+            'breakdown_target_product_external_id' => $this->nullStr($payload['breakdownTargetProductId'] ?? null),
+            'breakdown_target_quantity' => is_numeric($payload['breakdownTargetQuantity'] ?? null) ? (float) $payload['breakdownTargetQuantity'] : null,
+            'breakdown_target_title_snapshot' => $this->nullStr($payload['breakdownTargetTitleSnapshot'] ?? null),
+            'breakdown_target_unit_symbol_snapshot' => $this->nullStr($payload['breakdownTargetUnitSymbolSnapshot'] ?? null),
             'source_created_at' => $product->source_created_at ?? $occurredAt ?? now(),
             'source_updated_at' => $occurredAt ?? now(),
             'last_received_event_id' => $event->event_id,
