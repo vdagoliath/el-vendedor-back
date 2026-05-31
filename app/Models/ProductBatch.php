@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class StockAdjustment extends Model
+class ProductBatch extends Model
 {
     use HasServerVersion;
     use SoftDeletes;
@@ -18,13 +18,13 @@ class StockAdjustment extends Model
         'server_version',
         'product_external_id',
         'warehouse_external_id',
-        'target_quantity',
-        'change_quantity',
-        'previous_quantity',
-        'reason',
         'batch_code',
+        'quantity',
+        'remaining_quantity',
         'expiration_date',
-        'adjustment_at',
+        'received_at',
+        'source',
+        'source_id',
         'source_created_at',
         'source_updated_at',
         'last_received_event_id',
@@ -33,11 +33,10 @@ class StockAdjustment extends Model
     protected function casts(): array
     {
         return [
-            'target_quantity' => 'decimal:4',
-            'change_quantity' => 'decimal:4',
-            'previous_quantity' => 'decimal:4',
+            'quantity' => 'decimal:4',
+            'remaining_quantity' => 'decimal:4',
             'expiration_date' => 'date',
-            'adjustment_at' => 'datetime',
+            'received_at' => 'datetime',
             'source_created_at' => 'datetime',
             'source_updated_at' => 'datetime',
         ];

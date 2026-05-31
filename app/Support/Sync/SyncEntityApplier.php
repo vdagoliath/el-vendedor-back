@@ -7,6 +7,7 @@ use App\Models\Category;
 use App\Models\Contact;
 use App\Models\Employee;
 use App\Models\PointOfSale;
+use App\Models\ProductBatch;
 use App\Models\SyncReceivedEvent;
 use App\Models\UnitOfMeasure;
 use App\Models\Warehouse;
@@ -28,6 +29,7 @@ class SyncEntityApplier
             'units' => $this->applyUnit($business, $event, $change),
             'warehouses' => $this->applyWarehouse($business, $event, $change),
             'points_of_sale' => $this->applyPointOfSale($business, $event, $change),
+            'product_batches' => $this->applyProductBatch($business, $event, $change),
             default => false,
         };
     }
@@ -130,6 +132,29 @@ class SyncEntityApplier
                 'name' => trim((string) ($payload['name'] ?? '')),
                 'warehouse_external_id' => $this->nullableString($payload['warehouseId'] ?? null),
                 'employees' => is_array($payload['employees'] ?? null) ? $payload['employees'] : null,
+            ]
+        );
+    }
+
+    private function applyProductBatch(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        return $this->upsertOrDelete(
+            ProductBatch::class,
+            $business,
+            $event,
+            $change,
+            fn (array $payload) => [
+                'product_external_id' => trim((string) ($payload['productId'] ?? '')),
+                'warehouse_external_id' => trim((string) ($payload['warehouseId'] ?? '')),
+                'batch_code' => $this->nullableString($payload['batchCode'] ?? null),
+                'quantity' => is_numeric($payload['quantity'] ?? null) ? (float) $payload['quantity'] : 0,
+                'remaining_quantity' => is_numeric($payload['remainingQuantity'] ?? null)
+                    ? (float) $payload['remainingQuantity']
+                    : (is_numeric($payload['quantity'] ?? null) ? (float) $payload['quantity'] : 0),
+                'expiration_date' => $this->parseDate($payload['expirationDate'] ?? null)?->toDateString(),
+                'received_at' => $this->parseDate($payload['receivedAt'] ?? null),
+                'source' => $this->nullableString($payload['source'] ?? null),
+                'source_id' => $this->nullableString($payload['sourceId'] ?? null),
             ]
         );
     }
