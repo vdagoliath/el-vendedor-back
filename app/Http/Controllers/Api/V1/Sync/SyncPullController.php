@@ -1112,6 +1112,8 @@ class SyncPullController extends Controller
             'status' => $s->status,
             'currency' => $s->currency,
             'paymentMethod' => $s->payment_method,
+            'creditBalance' => $s->credit_balance !== null ? (float) $s->credit_balance : null,
+            'paymentBreakdown' => $s->payment_breakdown ?? [],
             'amountReceived' => $s->amount_received !== null ? (float) $s->amount_received : null,
             'change' => $s->change_amount !== null ? (float) $s->change_amount : null,
             'cashBreakdown' => $s->cash_breakdown ?? [],
