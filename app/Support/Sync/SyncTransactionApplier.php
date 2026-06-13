@@ -95,6 +95,8 @@ class SyncTransactionApplier
             'status' => $this->nullStr($payload['status'] ?? 'completed') ?? 'completed',
             'currency' => $this->nullStr($payload['currency'] ?? null),
             'payment_method' => $this->nullStr($payload['paymentMethod'] ?? null),
+            'credit_balance' => isset($payload['creditBalance']) ? $this->decimal($payload['creditBalance']) : null,
+            'payment_breakdown' => is_array($payload['paymentBreakdown'] ?? null) ? $payload['paymentBreakdown'] : null,
             'amount_received' => isset($payload['amountReceived']) ? $this->decimal($payload['amountReceived']) : null,
             'change_amount' => isset($payload['change']) ? $this->decimal($payload['change']) : null,
             'cash_breakdown' => is_array($payload['cashBreakdown'] ?? null) ? $payload['cashBreakdown'] : null,
