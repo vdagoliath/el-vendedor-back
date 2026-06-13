@@ -27,6 +27,8 @@ class Sale extends Model
         'status',
         'currency',
         'payment_method',
+        'credit_balance',
+        'payment_breakdown',
         'amount_received',
         'change_amount',
         'cash_breakdown',
@@ -45,6 +47,8 @@ class Sale extends Model
     {
         return [
             'total' => 'decimal:2',
+            'credit_balance' => 'decimal:2',
+            'payment_breakdown' => 'array',
             'amount_received' => 'decimal:2',
             'change_amount' => 'decimal:2',
             'cash_breakdown' => 'array',
