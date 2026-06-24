@@ -14,6 +14,7 @@ use App\Models\Expense;
 use App\Models\PointOfSale;
 use App\Models\Product;
 use App\Models\ProductBreakdown;
+use App\Models\ProductBatch;
 use App\Models\ProductLoss;
 use App\Models\Purchase;
 use App\Models\Sale;
@@ -64,6 +65,7 @@ class SyncPullController extends Controller
         'cash_register_sessions',
         'contacts',
         'products',
+        'product_batches',
         'stock_movements',
         'stock_adjustments',
         'product_losses',
@@ -274,6 +276,7 @@ class SyncPullController extends Controller
             'cash_register_sessions' => ['table' => 'cash_register_sessions', 'where' => 'business_id', 'value' => $business->id],
             'contacts' => ['table' => 'contacts', 'where' => 'business_id', 'value' => $business->id],
             'products' => ['table' => 'products', 'where' => 'business_id', 'value' => $business->id],
+            'product_batches' => ['table' => 'product_batches', 'where' => 'business_id', 'value' => $business->id],
             'stock_movements' => ['table' => 'stock_movements', 'where' => 'business_id', 'value' => $business->id],
             'stock_adjustments' => ['table' => 'stock_adjustments', 'where' => 'business_id', 'value' => $business->id],
             'product_losses' => ['table' => 'product_losses', 'where' => 'business_id', 'value' => $business->id],
@@ -372,6 +375,7 @@ class SyncPullController extends Controller
             'cash_register_sessions' => CashRegisterSession::class,
             'contacts' => Contact::class,
             'products' => Product::class,
+            'product_batches' => ProductBatch::class,
             'stock_movements' => StockMovement::class,
             'stock_adjustments' => StockAdjustment::class,
             'product_losses' => ProductLoss::class,
@@ -439,6 +443,7 @@ class SyncPullController extends Controller
             'cash_register_sessions' => $this->toCashRegisterSessionPayload($row),
             'contacts' => $this->toContactPayload($row),
             'products' => $this->toProductPayload($row),
+            'product_batches' => $this->toProductBatchPayload($row),
             'stock_movements' => $this->toStockMovementPayload($row),
             'stock_adjustments' => $this->toStockAdjustmentPayload($row),
             'product_losses' => $this->toProductLossPayload($row),
@@ -514,6 +519,7 @@ class SyncPullController extends Controller
             'cash_register_sessions' => $this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $cursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)),
             'contacts' => $this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $cursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)),
             'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
+            'product_batches' => $this->getMaterializedEntityChanges(ProductBatch::class, 'product_batches', $business, $cursor, $responseBoundary, $limit, fn (ProductBatch $m) => $this->toProductBatchPayload($m)),
             'stock_movements' => $this->getMaterializedEntityChanges(StockMovement::class, 'stock_movements', $business, $cursor, $responseBoundary, $limit, fn (StockMovement $m) => $this->toStockMovementPayload($m)),
             'stock_adjustments' => $this->getMaterializedEntityChanges(StockAdjustment::class, 'stock_adjustments', $business, $cursor, $responseBoundary, $limit, fn (StockAdjustment $m) => $this->toStockAdjustmentPayload($m)),
             'product_losses' => $this->getMaterializedEntityChanges(ProductLoss::class, 'product_losses', $business, $cursor, $responseBoundary, $limit, fn (ProductLoss $m) => $this->toProductLossPayload($m)),
@@ -1172,6 +1178,25 @@ class SyncPullController extends Controller
     }
 
     /** @return array<string, mixed> */
+    private function toProductBatchPayload(ProductBatch $b): array
+    {
+        return [
+            'productId' => $b->product_external_id,
+            'warehouseId' => $b->warehouse_external_id,
+            'batchCode' => $b->batch_code,
+            'quantity' => (float) $b->quantity,
+            'remainingQuantity' => (float) $b->remaining_quantity,
+            'expirationDate' => $b->expiration_date?->toDateString(),
+            'receivedAt' => $b->received_at?->toIso8601String(),
+            'source' => $b->source,
+            'sourceId' => $b->source_id,
+            'createdAt' => $b->source_created_at?->toIso8601String(),
+            'updatedAt' => $b->source_updated_at?->toIso8601String(),
+            'deleted_at' => $b->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
     private function toStockAdjustmentPayload(StockAdjustment $a): array
     {
         return [
@@ -1181,6 +1206,8 @@ class SyncPullController extends Controller
             'changeQuantity' => (float) $a->change_quantity,
             'previousQuantity' => $a->previous_quantity !== null ? (float) $a->previous_quantity : null,
             'reason' => $a->reason,
+            'batchCode' => $a->batch_code,
+            'expirationDate' => $a->expiration_date?->toDateString(),
             'timestamp' => $a->adjustment_at?->toIso8601String(),
             'deleted_at' => $a->deleted_at?->toIso8601String(),
         ];

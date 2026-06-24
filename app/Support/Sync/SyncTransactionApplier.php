@@ -530,6 +530,8 @@ class SyncTransactionApplier
                 ? $this->decimal($payload['previousQuantity'])
                 : null,
             'reason' => $this->nullStr($payload['reason'] ?? null),
+            'batch_code' => $this->nullStr($payload['batchCode'] ?? null),
+            'expiration_date' => $this->parseDate($payload['expirationDate'] ?? null)?->toDateString(),
             'adjustment_at' => $this->parseDate($payload['timestamp'] ?? null) ?? $occurredAt ?? now(),
             'source_created_at' => $adjustment->source_created_at ?? $occurredAt ?? now(),
             'source_updated_at' => $occurredAt ?? now(),

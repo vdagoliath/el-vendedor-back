@@ -58,6 +58,7 @@ class SyncBootstrapController extends Controller
                 'license_catalog',
                 'license_quote',
                 'products',
+                'product_batches',
                 'categories',
                 'contacts',
                 'employees',
