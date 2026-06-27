@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\Category;
 use App\Models\Contact;
 use App\Models\Employee;
+use App\Models\MetricsSnapshot;
 use App\Models\PointOfSale;
 use App\Models\ProductBatch;
 use App\Models\SyncReceivedEvent;
@@ -30,6 +31,7 @@ class SyncEntityApplier
             'warehouses' => $this->applyWarehouse($business, $event, $change),
             'points_of_sale' => $this->applyPointOfSale($business, $event, $change),
             'product_batches' => $this->applyProductBatch($business, $event, $change),
+            'metrics_snapshots' => $this->applyMetricsSnapshot($business, $event, $change),
             default => false,
         };
     }
@@ -156,6 +158,29 @@ class SyncEntityApplier
                 'source' => $this->nullableString($payload['source'] ?? null),
                 'source_id' => $this->nullableString($payload['sourceId'] ?? null),
             ]
+        );
+    }
+
+    private function applyMetricsSnapshot(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        return $this->upsertOrDelete(
+            MetricsSnapshot::class,
+            $business,
+            $event,
+            $change,
+            function (array $payload): array {
+                return [
+                    'period' => trim((string) ($payload['period'] ?? 'day')) ?: 'day',
+                    'period_start' => $this->parseDate($payload['periodStart'] ?? $payload['period_start'] ?? null)?->toDateString() ?? now()->toDateString(),
+                    'period_end' => $this->parseDate($payload['periodEnd'] ?? $payload['period_end'] ?? $payload['periodStart'] ?? null)?->toDateString() ?? now()->toDateString(),
+                    'generated_at' => $this->parseDate($payload['generatedAt'] ?? $payload['generated_at'] ?? null),
+                    'source_runs' => is_array($payload['sourceRuns'] ?? null) ? array_values($payload['sourceRuns']) : [],
+                    'source_counts' => is_array($payload['sourceCounts'] ?? null) ? $payload['sourceCounts'] : ['bills' => 0, 'expenses' => 0],
+                    'totals' => is_array($payload['totals'] ?? null) ? $payload['totals'] : [],
+                    'products' => is_array($payload['products'] ?? null) ? array_values($payload['products']) : [],
+                    'expense_categories' => is_array($payload['expenseCategories'] ?? null) ? array_values($payload['expenseCategories']) : [],
+                ];
+            }
         );
     }
 

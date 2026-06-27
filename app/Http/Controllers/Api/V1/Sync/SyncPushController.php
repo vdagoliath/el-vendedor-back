@@ -44,6 +44,7 @@ class SyncPushController extends Controller
         'stock_adjustments',
         'product_losses',
         'product_breakdowns',
+        'metrics_snapshots',
     ];
 
     public function __construct(

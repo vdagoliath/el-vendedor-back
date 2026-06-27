@@ -69,6 +69,7 @@ class SyncBootstrapController extends Controller
                 'sales',
                 'purchases',
                 'expenses',
+                'metrics_snapshots',
                 'stock_movements',
                 'stock_adjustments',
                 'product_losses',

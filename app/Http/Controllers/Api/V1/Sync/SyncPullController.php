@@ -11,6 +11,7 @@ use App\Models\Contact;
 use App\Models\Device;
 use App\Models\Employee;
 use App\Models\Expense;
+use App\Models\MetricsSnapshot;
 use App\Models\PointOfSale;
 use App\Models\Product;
 use App\Models\ProductBreakdown;
@@ -73,6 +74,7 @@ class SyncPullController extends Controller
         'sales',
         'purchases',
         'expenses',
+        'metrics_snapshots',
     ];
 
     /**
@@ -284,6 +286,7 @@ class SyncPullController extends Controller
             'sales' => ['table' => 'sales', 'where' => 'business_id', 'value' => $business->id],
             'purchases' => ['table' => 'purchases', 'where' => 'business_id', 'value' => $business->id],
             'expenses' => ['table' => 'expenses', 'where' => 'business_id', 'value' => $business->id],
+            'metrics_snapshots' => ['table' => 'metrics_snapshots', 'where' => 'business_id', 'value' => $business->id],
         ];
 
         $candidates = [];
@@ -383,6 +386,7 @@ class SyncPullController extends Controller
             'sales' => Sale::class,
             'purchases' => Purchase::class,
             'expenses' => Expense::class,
+            'metrics_snapshots' => MetricsSnapshot::class,
             default => null,
         };
 
@@ -451,6 +455,7 @@ class SyncPullController extends Controller
             'sales' => $this->toSalePayload($row),
             'purchases' => $this->toPurchasePayload($row),
             'expenses' => $this->toExpensePayload($row),
+            'metrics_snapshots' => $this->toMetricsSnapshotPayload($row),
             default => null,
         };
 
@@ -527,6 +532,7 @@ class SyncPullController extends Controller
             'sales' => $this->getSaleChanges($business, $cursor, $responseBoundary, $limit),
             'purchases' => $this->getMaterializedEntityChanges(Purchase::class, 'purchases', $business, $cursor, $responseBoundary, $limit, fn (Purchase $m) => $this->toPurchasePayload($m)),
             'expenses' => $this->getMaterializedEntityChanges(Expense::class, 'expenses', $business, $cursor, $responseBoundary, $limit, fn (Expense $m) => $this->toExpensePayload($m)),
+            'metrics_snapshots' => $this->getMaterializedEntityChanges(MetricsSnapshot::class, 'metrics_snapshots', $business, $cursor, $responseBoundary, $limit, fn (MetricsSnapshot $m) => $this->toMetricsSnapshotPayload($m)),
             default => collect(),
         };
     }
@@ -1161,6 +1167,24 @@ class SyncPullController extends Controller
             'amount' => (float) $e->amount,
             'category' => $e->category,
             'deleted_at' => $e->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toMetricsSnapshotPayload(MetricsSnapshot $snapshot): array
+    {
+        return [
+            'period' => $snapshot->period,
+            'periodStart' => $snapshot->period_start?->toDateString(),
+            'periodEnd' => $snapshot->period_end?->toDateString(),
+            'generatedAt' => $snapshot->generated_at?->toIso8601String(),
+            'updatedAt' => $snapshot->source_updated_at?->toIso8601String() ?? $snapshot->updated_at?->toIso8601String(),
+            'sourceRuns' => $snapshot->source_runs ?? [],
+            'sourceCounts' => $snapshot->source_counts ?? ['bills' => 0, 'expenses' => 0],
+            'totals' => $snapshot->totals ?? [],
+            'products' => $snapshot->products ?? [],
+            'expenseCategories' => $snapshot->expense_categories ?? [],
+            'deleted_at' => $snapshot->deleted_at?->toIso8601String(),
         ];
     }
 
