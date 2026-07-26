@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Sync\PushSyncRequest;
 use App\Models\Business;
 use App\Support\Licensing\BusinessLicensePricingResolver;
+use App\Support\Sync\BusinessPolicies;
 use App\Support\Sync\SyncCompatibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -43,7 +44,7 @@ class SyncBootstrapController extends Controller
                 'phone' => $business->phone,
                 'default_currency' => $business->default_currency ?? 'CUP',
                 'license_expires_at' => $business->license_expires_at?->toIso8601String(),
-                'policies' => $business->policies ?? [],
+                'policies' => BusinessPolicies::normalize($business->policies ?? []),
                 'license_catalog' => $this->pricingResolver->catalog(),
                 'license_quote' => $this->pricingResolver->quote($business),
             ],

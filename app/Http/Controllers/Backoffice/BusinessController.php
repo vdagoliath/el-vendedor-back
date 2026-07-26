@@ -9,6 +9,7 @@ use App\Models\LicensePricingConfig;
 use App\Models\LicensePricingRule;
 use App\Models\User;
 use App\Support\Licensing\BusinessLicensePricingResolver;
+use App\Support\Sync\BusinessPolicies;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -229,7 +230,7 @@ class BusinessController extends Controller
             'street' => $business->street,
             'phone' => $business->phone,
             'default_currency' => $business->default_currency,
-            'policies' => array_merge($this->defaultBusinessPolicies(), (array) ($business->policies ?? [])),
+            'policies' => array_merge($this->defaultBusinessPolicies(), BusinessPolicies::normalize($business->policies ?? [])),
             'owner_emails' => $business->owners
                 ->pluck('email')
                 ->filter()
@@ -249,7 +250,7 @@ class BusinessController extends Controller
      */
     private function businessPoliciesFromRequest(StoreBusinessRequest $request, array $current = []): array
     {
-        $base = array_merge($this->defaultBusinessPolicies(), $current);
+        $base = array_merge($this->defaultBusinessPolicies(), BusinessPolicies::normalize($current));
 
         return array_merge($base, [
             'allowZeroStockSales' => $request->has('allow_zero_stock_sales')

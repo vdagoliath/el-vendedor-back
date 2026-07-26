@@ -12,6 +12,7 @@ use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
 use App\Support\Inventory\InventoryProjector;
+use App\Support\Sync\BusinessPolicies;
 use App\Support\Sync\ContactPayloadNormalizer;
 use App\Support\Sync\SyncCompatibility;
 use App\Support\Sync\SyncEntityApplier;
@@ -507,7 +508,10 @@ class SyncPushController extends Controller
         ]);
 
         if (is_array($payload['policies'] ?? null)) {
-            $business->policies = array_merge((array) ($business->policies ?? []), $payload['policies']);
+            $business->policies = array_merge(
+                BusinessPolicies::normalize((array) ($business->policies ?? [])),
+                BusinessPolicies::normalize($payload['policies'])
+            );
         }
 
         $business->touch();

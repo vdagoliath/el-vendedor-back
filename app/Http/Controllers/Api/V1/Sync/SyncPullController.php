@@ -27,6 +27,7 @@ use App\Models\SyncConflict;
 use App\Models\UnitOfMeasure;
 use App\Models\Warehouse;
 use App\Support\Licensing\BusinessLicensePricingResolver;
+use App\Support\Sync\BusinessPolicies;
 use App\Support\Sync\ContactPayloadNormalizer;
 use App\Support\Sync\SyncCompatibility;
 use App\Support\Sync\SyncCursor;
@@ -814,7 +815,7 @@ class SyncPullController extends Controller
             'phone' => $business->phone,
             'defaultCurrency' => $business->default_currency ?? 'CUP',
             'licenseExpiresAt' => $business->license_expires_at?->toIso8601String(),
-            'policies' => $business->policies ?? [],
+            'policies' => BusinessPolicies::normalize($business->policies ?? []),
         ];
     }
 
