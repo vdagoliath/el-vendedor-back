@@ -43,7 +43,6 @@ class SyncPushController extends Controller
         'cash_register_sessions',
         'stock_movements',
         'stock_adjustments',
-        'product_losses',
         'product_breakdowns',
         'metrics_snapshots',
     ];
