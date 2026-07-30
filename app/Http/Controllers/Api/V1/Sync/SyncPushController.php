@@ -209,7 +209,11 @@ class SyncPushController extends Controller
         $serverVersion = (int) $business->data_reset_version;
         $rawClientVersion = $request->header('X-Business-Data-Reset-Version');
 
-        if ($serverVersion === 0 && ($rawClientVersion === null || $rawClientVersion === '0')) {
+        if ($rawClientVersion === null) {
+            return null;
+        }
+
+        if ($serverVersion === 0 && $rawClientVersion === '0') {
             return null;
         }
 
