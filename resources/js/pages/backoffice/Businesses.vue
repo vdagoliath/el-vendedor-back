@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
-import { CircleCheckBig, Copy, KeyRound, PencilLine, Plus, Power, PowerOff, Store } from 'lucide-vue-next';
+import { AlertTriangle, CircleCheckBig, Copy, KeyRound, PencilLine, Plus, Power, PowerOff, Store, Trash2 } from 'lucide-vue-next';
 import { computed, reactive, ref } from 'vue';
 import BusinessController from '@/actions/App/Http/Controllers/Backoffice/BusinessController';
 import CurrentBusinessController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessController';
@@ -17,6 +17,15 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -52,6 +61,8 @@ type BusinessItem = {
         productCodePrefix: string;
         productCodeDigits: number;
     };
+    data_reset_version: number;
+    data_reset_at: string | null;
     owner_emails: string[];
     is_active: boolean;
     current_user_role: string | null;
@@ -132,6 +143,8 @@ defineProps<Props>();
 const page = usePage<{ auth: Auth; flash: Flash }>();
 const copiedToken = ref(false);
 const editingBusinessId = ref<number | null>(null);
+const clearingBusinessId = ref<number | null>(null);
+const clearConfirmation = ref('');
 const currencyOptions = ['CUP', 'USD', 'EUR', 'MLC'];
 const cubaProvinces: CubaProvince[] = [
     {
@@ -304,6 +317,19 @@ const toggleEdit = (businessId: number) => {
     editingBusinessId.value = editingBusinessId.value === businessId ? null : businessId;
 };
 
+const openClearDialog = (business: BusinessItem) => {
+    clearingBusinessId.value = business.id;
+    clearConfirmation.value = '';
+};
+
+const updateClearDialog = (businessId: number, open: boolean) => {
+    clearingBusinessId.value = open ? businessId : null;
+
+    if (!open) {
+        clearConfirmation.value = '';
+    }
+};
+
 const copySyncToken = async (token: string | null) => {
     if (!token || !navigator?.clipboard) {
         return;
@@ -448,6 +474,9 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <p v-if="business.owner_emails.length">
                                             Dueños: {{ business.owner_emails.join(', ') }}
                                         </p>
+                                        <p v-if="business.data_reset_version > 0">
+                                            Limpiezas: {{ business.data_reset_version }}
+                                        </p>
                                     </div>
                                 </div>
 
@@ -516,6 +545,71 @@ const breadcrumbs: BreadcrumbItem[] = [
                                                 Reactivar
                                             </Button>
                                         </Form>
+
+                                        <Dialog
+                                            :open="clearingBusinessId === business.id"
+                                            @update:open="updateClearDialog(business.id, $event)"
+                                        >
+                                            <Button
+                                                type="button"
+                                                variant="destructive"
+                                                class="min-w-32"
+                                                @click="openClearDialog(business)"
+                                            >
+                                                <Trash2 class="size-4" />
+                                                Limpiar
+                                            </Button>
+                                            <DialogContent class="sm:max-w-lg">
+                                                <Form
+                                                    v-bind="BusinessController.clear.form(business.id)"
+                                                    class="space-y-5"
+                                                    v-slot="{ errors, processing }"
+                                                >
+                                                    <DialogHeader class="space-y-3">
+                                                        <div class="flex size-12 items-center justify-center rounded-full bg-red-100 text-red-700">
+                                                            <AlertTriangle class="size-6" />
+                                                        </div>
+                                                        <DialogTitle>Limpiar {{ business.name }}</DialogTitle>
+                                                        <DialogDescription>
+                                                            Se eliminarán operaciones, productos, inventario, clientes, proveedores, puntos de venta, mermas y datos de sincronización. Se conservan las preferencias del negocio y su equipo.
+                                                        </DialogDescription>
+                                                    </DialogHeader>
+
+                                                    <div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                                                        Los dispositivos tendrán que reiniciar sus datos locales antes de volver a sincronizar.
+                                                    </div>
+
+                                                    <div class="grid gap-2">
+                                                        <Label :for="`clear-confirmation-${business.id}`">
+                                                            Escribe {{ business.slug }} para confirmar
+                                                        </Label>
+                                                        <Input
+                                                            :id="`clear-confirmation-${business.id}`"
+                                                            v-model="clearConfirmation"
+                                                            name="confirmation"
+                                                            autocomplete="off"
+                                                        />
+                                                        <InputError :message="errors.confirmation" />
+                                                    </div>
+
+                                                    <DialogFooter class="gap-2">
+                                                        <DialogClose as-child>
+                                                            <Button type="button" variant="outline">
+                                                                Cancelar
+                                                            </Button>
+                                                        </DialogClose>
+                                                        <Button
+                                                            type="submit"
+                                                            variant="destructive"
+                                                            :disabled="processing || clearConfirmation !== business.slug"
+                                                        >
+                                                            <Trash2 class="size-4" />
+                                                            {{ processing ? 'Limpiando...' : 'Limpiar negocio' }}
+                                                        </Button>
+                                                    </DialogFooter>
+                                                </Form>
+                                            </DialogContent>
+                                        </Dialog>
                                     </div>
                                 </div>
                             </div>

@@ -65,6 +65,11 @@ class SyncPushController extends Controller
 
         abort_unless($business instanceof Business, 409, 'No existe un negocio actual activo para sincronizar.');
 
+        $dataResetFailure = $this->evaluateBusinessDataResetVersion($request, $business);
+        if ($dataResetFailure !== null) {
+            return response()->json($dataResetFailure, 409);
+        }
+
         /** @var PersonalAccessToken|null $accessToken */
         $accessToken = $request->user()?->currentAccessToken();
         $ability = $this->resolveTokenAbility($accessToken);
@@ -194,6 +199,36 @@ class SyncPushController extends Controller
                 'device_id' => $device->id,
             ],
         ], 202);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function evaluateBusinessDataResetVersion(PushSyncRequest $request, Business $business): ?array
+    {
+        $serverVersion = (int) $business->data_reset_version;
+        $rawClientVersion = $request->header('X-Business-Data-Reset-Version');
+
+        if ($serverVersion === 0 && ($rawClientVersion === null || $rawClientVersion === '0')) {
+            return null;
+        }
+
+        if (! is_numeric($rawClientVersion) || (int) $rawClientVersion !== $serverVersion) {
+            return [
+                'message' => 'El negocio fue limpiado en el servidor. Debes reiniciar los datos locales antes de volver a sincronizar.',
+                'error' => [
+                    'code' => 'business_data_reset_required',
+                    'retryable' => false,
+                ],
+                'current_business' => [
+                    'id' => $business->id,
+                    'data_reset_version' => $serverVersion,
+                    'data_reset_at' => $business->data_reset_at?->toIso8601String(),
+                ],
+            ];
+        }
+
+        return null;
     }
 
     /**

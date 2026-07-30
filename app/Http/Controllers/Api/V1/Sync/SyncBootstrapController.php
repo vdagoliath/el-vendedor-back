@@ -43,6 +43,8 @@ class SyncBootstrapController extends Controller
                 ],
                 'phone' => $business->phone,
                 'default_currency' => $business->default_currency ?? 'CUP',
+                'data_reset_version' => (int) $business->data_reset_version,
+                'data_reset_at' => $business->data_reset_at?->toIso8601String(),
                 'license_expires_at' => $business->license_expires_at?->toIso8601String(),
                 'policies' => BusinessPolicies::normalize($business->policies ?? []),
                 'license_catalog' => $this->pricingResolver->catalog(),
@@ -81,6 +83,7 @@ class SyncBootstrapController extends Controller
             'push_contract' => [
                 'max_batch_size' => PushSyncRequest::MAX_BATCH_SIZE,
                 'operations' => ['create', 'update', 'delete', 'upsert'],
+                'business_data_reset_header' => 'X-Business-Data-Reset-Version',
             ],
             'pull_contract' => [
                 'cursor_type' => 'iso8601',

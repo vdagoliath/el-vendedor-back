@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Backoffice;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Backoffice\ClearBusinessRequest;
 use App\Http\Requests\Backoffice\StoreBusinessRequest;
 use App\Models\Business;
 use App\Models\LicensePricingConfig;
 use App\Models\LicensePricingRule;
 use App\Models\User;
+use App\Support\Backoffice\BusinessCleaner;
 use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\BusinessPolicies;
 use Illuminate\Http\RedirectResponse;
@@ -20,7 +22,8 @@ use Inertia\Response;
 class BusinessController extends Controller
 {
     public function __construct(
-        private readonly BusinessLicensePricingResolver $pricingResolver
+        private readonly BusinessLicensePricingResolver $pricingResolver,
+        private readonly BusinessCleaner $businessCleaner
     ) {}
 
     /**
@@ -162,6 +165,20 @@ class BusinessController extends Controller
     }
 
     /**
+     * Clear all operational data for a business while preserving its profile and team.
+     */
+    public function clear(ClearBusinessRequest $request, Business $business): RedirectResponse
+    {
+        $deleted = $this->businessCleaner->clear($business);
+        $deletedCount = array_sum($deleted);
+
+        return to_route('backoffice.businesses.index')->with(
+            'success',
+            "El negocio fue limpiado correctamente. Se eliminaron {$deletedCount} registros operativos."
+        );
+    }
+
+    /**
      * Generate a sync token for the current business and reveal it once.
      */
     public function issueSyncToken(Request $request, Business $business): RedirectResponse
@@ -231,6 +248,8 @@ class BusinessController extends Controller
             'phone' => $business->phone,
             'default_currency' => $business->default_currency,
             'policies' => array_merge($this->defaultBusinessPolicies(), BusinessPolicies::normalize($business->policies ?? [])),
+            'data_reset_version' => (int) $business->data_reset_version,
+            'data_reset_at' => $business->data_reset_at?->toIso8601String(),
             'owner_emails' => $business->owners
                 ->pluck('email')
                 ->filter()

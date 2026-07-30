@@ -36,6 +36,8 @@ class Business extends Model
         'phone',
         'default_currency',
         'policies',
+        'data_reset_version',
+        'data_reset_at',
         'license_expires_at',
         'is_active',
         'created_by_user_id',
@@ -60,6 +62,8 @@ class Business extends Model
     {
         return [
             'is_active' => 'boolean',
+            'data_reset_at' => 'datetime',
+            'data_reset_version' => 'integer',
             'license_expires_at' => 'datetime',
             'policies' => 'array',
         ];

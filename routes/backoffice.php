@@ -24,6 +24,7 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
     Route::put('businesses/{business}', [BusinessController::class, 'update'])->name('businesses.update');
     Route::delete('businesses/{business}', [BusinessController::class, 'destroy'])->name('businesses.destroy');
     Route::post('businesses/{business}/restore', [BusinessController::class, 'restore'])->name('businesses.restore');
+    Route::post('businesses/{business}/clear', [BusinessController::class, 'clear'])->name('businesses.clear');
     Route::post('businesses/{business}/sync-token', [BusinessController::class, 'issueSyncToken'])->name('businesses.sync-token');
 
     Route::put('current-business', [CurrentBusinessController::class, 'update'])->name('current-business.update');
