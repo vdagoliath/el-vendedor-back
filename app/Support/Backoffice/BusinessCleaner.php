@@ -62,6 +62,7 @@ class BusinessCleaner
             'product_breakdowns',
             'product_batches',
             'cash_register_sessions',
+            'weight_journals',
             'sales',
             'purchases',
             'expenses',

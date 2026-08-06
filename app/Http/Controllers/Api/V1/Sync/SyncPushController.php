@@ -7,6 +7,7 @@ use App\Http\Requests\Api\V1\Sync\PushSyncRequest;
 use App\Models\Business;
 use App\Models\Device;
 use App\Models\PersonalAccessToken;
+use App\Models\PointOfSale;
 use App\Models\Product;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
@@ -41,9 +42,6 @@ class SyncPushController extends Controller
         'license_catalog',
         'license_quote',
         'cash_register_sessions',
-        'stock_movements',
-        'stock_adjustments',
-        'product_losses',
         'product_breakdowns',
         'metrics_snapshots',
     ];
@@ -97,6 +95,20 @@ class SyncPushController extends Controller
                     'status' => 'rejected',
                     'reason' => 'El tipo de entidad no está permitido para este dispositivo.',
                     'code' => 'sync_entity_forbidden',
+                    'retryable' => false,
+                ];
+
+                continue;
+            }
+
+            if (! $this->isChangeAllowedForSellerScope($business, $change, $ability, $employeeExternalId)) {
+                $rejected[] = [
+                    'event_id' => $change['event_id'],
+                    'entity_type' => $change['entity_type'],
+                    'entity_id' => $change['entity_id'],
+                    'status' => 'rejected',
+                    'reason' => 'El movimiento no pertenece al almacén asignado a este vendedor.',
+                    'code' => 'sync_seller_scope_forbidden',
                     'retryable' => false,
                 ];
 
@@ -265,6 +277,84 @@ class SyncPushController extends Controller
         }
 
         return false;
+    }
+
+
+    private function isChangeAllowedForSellerScope(Business $business, array $change, ?string $ability, ?string $employeeExternalId): bool
+    {
+        if ($ability !== 'sync:seller') {
+            return true;
+        }
+
+        $warehouseIds = $this->warehouseIdsFromSellerChange($change);
+        if ($warehouseIds === []) {
+            return true;
+        }
+
+        if (! is_string($employeeExternalId) || trim($employeeExternalId) === '') {
+            return false;
+        }
+
+        $assignedWarehouses = $this->warehouseIdsForSeller($business, $employeeExternalId);
+        if ($assignedWarehouses === []) {
+            return false;
+        }
+
+        foreach ($warehouseIds as $warehouseId) {
+            if (! in_array($warehouseId, $assignedWarehouses, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function warehouseIdsFromSellerChange(array $change): array
+    {
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+        $warehouseIds = match ($change['entity_type']) {
+            'sales', 'stock_adjustments', 'product_losses', 'weight_journals' => [
+                $payload['warehouseId'] ?? null,
+            ],
+            'stock_movements' => [
+                $payload['fromWarehouseId'] ?? null,
+                $payload['toWarehouseId'] ?? null,
+            ],
+            default => [],
+        };
+
+        return array_values(array_unique(array_filter(array_map(
+            static fn (mixed $value): ?string => is_string($value) && trim($value) !== '' ? trim($value) : null,
+            $warehouseIds
+        ))));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function warehouseIdsForSeller(Business $business, string $employeeExternalId): array
+    {
+        $pointsOfSale = PointOfSale::query()
+            ->where('business_id', $business->id)
+            ->whereNotNull('warehouse_external_id')
+            ->get(['warehouse_external_id', 'employees']);
+
+        $warehouseIds = [];
+        foreach ($pointsOfSale as $pointOfSale) {
+            $employees = is_array($pointOfSale->employees) ? $pointOfSale->employees : [];
+            foreach ($employees as $employee) {
+                $id = is_array($employee) ? ($employee['_id'] ?? $employee['id'] ?? null) : null;
+                if ($id === $employeeExternalId) {
+                    $warehouseIds[] = (string) $pointOfSale->warehouse_external_id;
+                    break;
+                }
+            }
+        }
+
+        return array_values(array_unique($warehouseIds));
     }
 
     /**

@@ -79,6 +79,7 @@ class SyncBootstrapController extends Controller
                 'product_breakdowns',
                 'inventory_events',
                 'cash_register_sessions',
+                'weight_journals',
             ],
             'push_contract' => [
                 'max_batch_size' => PushSyncRequest::MAX_BATCH_SIZE,

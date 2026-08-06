@@ -26,6 +26,7 @@ use App\Models\SyncConflict;
 // SyncReceivedEvent ya no se usa en pull — todas las entidades están materializadas.
 use App\Models\UnitOfMeasure;
 use App\Models\Warehouse;
+use App\Models\WeightJournal;
 use App\Support\Licensing\BusinessLicensePricingResolver;
 use App\Support\Sync\BusinessPolicies;
 use App\Support\Sync\ContactPayloadNormalizer;
@@ -65,6 +66,7 @@ class SyncPullController extends Controller
         'warehouses',
         'points_of_sale',
         'cash_register_sessions',
+        'weight_journals',
         'contacts',
         'products',
         'product_batches',
@@ -277,6 +279,7 @@ class SyncPullController extends Controller
             'warehouses' => ['table' => 'warehouses', 'where' => 'business_id', 'value' => $business->id],
             'points_of_sale' => ['table' => 'points_of_sale', 'where' => 'business_id', 'value' => $business->id],
             'cash_register_sessions' => ['table' => 'cash_register_sessions', 'where' => 'business_id', 'value' => $business->id],
+            'weight_journals' => ['table' => 'weight_journals', 'where' => 'business_id', 'value' => $business->id],
             'contacts' => ['table' => 'contacts', 'where' => 'business_id', 'value' => $business->id],
             'products' => ['table' => 'products', 'where' => 'business_id', 'value' => $business->id],
             'product_batches' => ['table' => 'product_batches', 'where' => 'business_id', 'value' => $business->id],
@@ -377,6 +380,7 @@ class SyncPullController extends Controller
             'warehouses' => Warehouse::class,
             'points_of_sale' => PointOfSale::class,
             'cash_register_sessions' => CashRegisterSession::class,
+            'weight_journals' => WeightJournal::class,
             'contacts' => Contact::class,
             'products' => Product::class,
             'product_batches' => ProductBatch::class,
@@ -446,6 +450,7 @@ class SyncPullController extends Controller
             'warehouses' => $this->toWarehousePayload($row),
             'points_of_sale' => $this->toPointOfSalePayload($row),
             'cash_register_sessions' => $this->toCashRegisterSessionPayload($row),
+            'weight_journals' => $this->toWeightJournalPayload($row),
             'contacts' => $this->toContactPayload($row),
             'products' => $this->toProductPayload($row),
             'product_batches' => $this->toProductBatchPayload($row),
@@ -523,6 +528,7 @@ class SyncPullController extends Controller
             'warehouses' => $this->getMaterializedEntityChanges(Warehouse::class, 'warehouses', $business, $cursor, $responseBoundary, $limit, fn (Warehouse $m) => $this->toWarehousePayload($m)),
             'points_of_sale' => $this->getMaterializedEntityChanges(PointOfSale::class, 'points_of_sale', $business, $cursor, $responseBoundary, $limit, fn (PointOfSale $m) => $this->toPointOfSalePayload($m)),
             'cash_register_sessions' => $this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $cursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)),
+            'weight_journals' => $this->getMaterializedEntityChanges(WeightJournal::class, 'weight_journals', $business, $cursor, $responseBoundary, $limit, fn (WeightJournal $m) => $this->toWeightJournalPayload($m)),
             'contacts' => $this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $cursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)),
             'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
             'product_batches' => $this->getMaterializedEntityChanges(ProductBatch::class, 'product_batches', $business, $cursor, $responseBoundary, $limit, fn (ProductBatch $m) => $this->toProductBatchPayload($m)),
@@ -965,6 +971,31 @@ class SyncPullController extends Controller
             'closed_by' => $m->closed_by,
             'initial_inventory_snapshot' => $m->initial_inventory_snapshot,
             'final_inventory_snapshot' => $m->final_inventory_snapshot,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+
+    /** @return array<string, mixed> */
+    private function toWeightJournalPayload(WeightJournal $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'status' => $m->status,
+            'openedAt' => $m->opened_at?->toIso8601String(),
+            'closedAt' => $m->closed_at?->toIso8601String(),
+            'posId' => $m->pos_external_id,
+            'posName' => $m->pos_name,
+            'cashRegisterSessionId' => $m->cash_register_session_external_id,
+            'warehouseId' => $m->warehouse_external_id,
+            'paymentMethod' => $m->payment_method,
+            'items' => $m->items ?? [],
+            'totalSoldQuantity' => (float) $m->total_sold_quantity,
+            'totalLossQuantity' => (float) $m->total_loss_quantity,
+            'total' => (float) $m->total,
+            'saleId' => $m->sale_external_id,
+            'saleReference' => $m->sale_reference,
+            'notes' => $m->notes,
             'deleted_at' => $m->deleted_at?->toIso8601String(),
         ];
     }

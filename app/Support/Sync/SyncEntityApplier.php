@@ -12,6 +12,7 @@ use App\Models\ProductBatch;
 use App\Models\SyncReceivedEvent;
 use App\Models\UnitOfMeasure;
 use App\Models\Warehouse;
+use App\Models\WeightJournal;
 use Illuminate\Support\Carbon;
 use Throwable;
 
@@ -32,6 +33,7 @@ class SyncEntityApplier
             'points_of_sale' => $this->applyPointOfSale($business, $event, $change),
             'product_batches' => $this->applyProductBatch($business, $event, $change),
             'metrics_snapshots' => $this->applyMetricsSnapshot($business, $event, $change),
+            'weight_journals' => $this->applyWeightJournal($business, $event, $change),
             default => false,
         };
     }
@@ -184,6 +186,51 @@ class SyncEntityApplier
         );
     }
 
+    private function applyWeightJournal(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        return $this->upsertOrDelete(
+            WeightJournal::class,
+            $business,
+            $event,
+            $change,
+            function (array $payload) use ($business, $change): array {
+                $status = trim((string) ($payload['status'] ?? 'open')) ?: 'open';
+                $sessionExternalId = trim((string) ($payload['cashRegisterSessionId'] ?? ''));
+
+                if ($status === 'open' && $sessionExternalId !== '') {
+                    $hasAnotherOpenJournal = WeightJournal::query()
+                        ->where('business_id', $business->id)
+                        ->where('cash_register_session_external_id', $sessionExternalId)
+                        ->where('status', 'open')
+                        ->where('external_id', '!=', $change['entity_id'])
+                        ->exists();
+
+                    if ($hasAnotherOpenJournal) {
+                        throw new \RuntimeException('Ya existe una jornada por peso abierta para esta sesión de caja.');
+                    }
+                }
+
+                return [
+                    'status' => $status,
+                    'opened_at' => $this->parseDate($payload['openedAt'] ?? null),
+                    'closed_at' => $this->parseDate($payload['closedAt'] ?? null),
+                    'pos_external_id' => trim((string) ($payload['posId'] ?? '')),
+                    'pos_name' => $this->nullableString($payload['posName'] ?? null),
+                    'cash_register_session_external_id' => $sessionExternalId,
+                    'warehouse_external_id' => trim((string) ($payload['warehouseId'] ?? '')),
+                    'payment_method' => $this->nullableString($payload['paymentMethod'] ?? null),
+                    'items' => is_array($payload['items'] ?? null) ? array_values($payload['items']) : [],
+                    'total_sold_quantity' => $this->decimal($payload['totalSoldQuantity'] ?? 0),
+                    'total_loss_quantity' => $this->decimal($payload['totalLossQuantity'] ?? 0),
+                    'total' => $this->decimal($payload['total'] ?? 0),
+                    'sale_external_id' => $this->nullableString($payload['saleId'] ?? null),
+                    'sale_reference' => $this->nullableString($payload['saleReference'] ?? null),
+                    'notes' => $this->nullableString($payload['notes'] ?? null),
+                ];
+            }
+        );
+    }
+
     /**
      * Generic upsert-or-delete for any entity with (business_id, external_id) unique key.
      *
@@ -259,6 +306,11 @@ class SyncEntityApplier
         } catch (Throwable) {
             return null;
         }
+    }
+
+    private function decimal(mixed $value): float
+    {
+        return is_numeric($value) ? (float) $value : 0.0;
     }
 
     private function nullableString(mixed $value): ?string
