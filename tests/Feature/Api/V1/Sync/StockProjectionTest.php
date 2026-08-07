@@ -5,6 +5,7 @@ use App\Models\Business;
 use App\Models\Product;
 use App\Models\StockProjection;
 use App\Models\User;
+use Illuminate\Testing\TestResponse;
 
 beforeEach(function () {
     config()->set('sync.protocol_version', 1);
@@ -36,7 +37,7 @@ function projectionSyncHeaders(): array
     ];
 }
 
-function pushChanges($testCase, string $token, string $deviceId, array $changes): \Illuminate\Testing\TestResponse
+function pushChanges($testCase, string $token, string $deviceId, array $changes): TestResponse
 {
     return $testCase->withToken($token)
         ->withHeaders(projectionSyncHeaders())
@@ -44,6 +45,16 @@ function pushChanges($testCase, string $token, string $deviceId, array $changes)
             'device' => ['id' => $deviceId, 'app_version' => '1.0.0'],
             'changes' => $changes,
         ]);
+}
+
+function projectedQty(Business $business, string $productExternalId, string $warehouseExternalId): float
+{
+    return (float) StockProjection::query()
+        ->where('business_id', $business->id)
+        ->where('product_external_id', $productExternalId)
+        ->where('warehouse_external_id', $warehouseExternalId)
+        ->firstOrFail()
+        ->qty;
 }
 
 test('a product upsert with _stockSeed seeds the projection', function () {
@@ -145,6 +156,54 @@ test('a completed sale subtracts from the projection', function () {
     expect((float) $row->qty)->toBe(46.0);
 });
 
+test('a completed sale uses inventory consumption when present', function () {
+    StockProjection::query()->create([
+        'business_id' => $this->business->id,
+        'product_external_id' => 'prepared-coffee',
+        'warehouse_external_id' => 'wh-1',
+        'qty' => 10,
+    ]);
+
+    StockProjection::query()->create([
+        'business_id' => $this->business->id,
+        'product_external_id' => 'coffee-beans',
+        'warehouse_external_id' => 'wh-1',
+        'qty' => 5,
+    ]);
+
+    StockProjection::query()->create([
+        'business_id' => $this->business->id,
+        'product_external_id' => 'sugar',
+        'warehouse_external_id' => 'wh-1',
+        'qty' => 3,
+    ]);
+
+    pushChanges($this, $this->ownerToken, 'device-projection-recipe-sale', [[
+        'event_id' => 'evt-sale-recipe',
+        'entity_type' => 'sales',
+        'entity_id' => 'sale-recipe',
+        'operation' => 'create',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'type' => 'sale',
+            'status' => 'completed',
+            'warehouseId' => 'wh-1',
+            'total' => 160,
+            'lines' => [
+                ['productId' => 'prepared-coffee', 'productTitle' => 'Cafe preparado', 'price' => 80, 'amount' => 2, 'subTotal' => 160],
+            ],
+            'inventoryConsumption' => [
+                ['productId' => 'coffee-beans', 'amount' => 0.04],
+                ['productId' => 'sugar', 'amount' => 0.02],
+            ],
+        ],
+    ]])->assertAccepted();
+
+    expect(projectedQty($this->business, 'prepared-coffee', 'wh-1'))->toBe(10.0)
+        ->and(projectedQty($this->business, 'coffee-beans', 'wh-1'))->toBe(4.96)
+        ->and(projectedQty($this->business, 'sugar', 'wh-1'))->toBe(2.98);
+});
+
 test('returning a sale restores the stock', function () {
     StockProjection::query()->create([
         'business_id' => $this->business->id,
@@ -220,6 +279,46 @@ test('a completed purchase adds to the projection', function () {
     expect((float) $row->qty)->toBe(100.0);
 });
 
+test('canceling a completed purchase removes the stock it added', function () {
+    pushChanges($this, $this->ownerToken, 'device-projection-purchase-cancel', [[
+        'event_id' => 'evt-purchase-cancel-1',
+        'entity_type' => 'purchases',
+        'entity_id' => 'purchase-cancel',
+        'operation' => 'create',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'type' => 'purchase',
+            'status' => 'completed',
+            'warehouseId' => 'wh-1',
+            'total' => 100,
+            'lines' => [
+                ['productId' => 'product-purchase-cancel', 'productTitle' => 'Compra cancelable', 'price' => 10, 'amount' => 10, 'subTotal' => 100],
+            ],
+        ],
+    ]])->assertAccepted();
+
+    expect(projectedQty($this->business, 'product-purchase-cancel', 'wh-1'))->toBe(10.0);
+
+    pushChanges($this, $this->ownerToken, 'device-projection-purchase-cancel', [[
+        'event_id' => 'evt-purchase-cancel-2',
+        'entity_type' => 'purchases',
+        'entity_id' => 'purchase-cancel',
+        'operation' => 'update',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'type' => 'purchase',
+            'status' => 'canceled',
+            'warehouseId' => 'wh-1',
+            'total' => 100,
+            'lines' => [
+                ['productId' => 'product-purchase-cancel', 'productTitle' => 'Compra cancelable', 'price' => 10, 'amount' => 10, 'subTotal' => 100],
+            ],
+        ],
+    ]])->assertAccepted();
+
+    expect(projectedQty($this->business, 'product-purchase-cancel', 'wh-1'))->toBe(0.0);
+});
+
 test('a stock movement applies opposite deltas in from and to warehouses', function () {
     StockProjection::query()->create([
         'business_id' => $this->business->id,
@@ -283,6 +382,32 @@ test('a stock adjustment applies its change_quantity', function () {
     expect((float) $row->qty)->toBe(100.0);
 });
 
+test('a product loss subtracts from the projection', function () {
+    StockProjection::query()->create([
+        'business_id' => $this->business->id,
+        'product_external_id' => 'product-loss',
+        'warehouse_external_id' => 'wh-1',
+        'qty' => 20,
+    ]);
+
+    pushChanges($this, $this->ownerToken, 'device-projection-loss', [[
+        'event_id' => 'evt-loss-1',
+        'entity_type' => 'product_losses',
+        'entity_id' => 'loss-1',
+        'operation' => 'create',
+        'occurred_at' => now()->toIso8601String(),
+        'payload' => [
+            'productId' => 'product-loss',
+            'warehouseId' => 'wh-1',
+            'quantity' => 3,
+            'lossType' => 'damaged',
+            'timestamp' => now()->toIso8601String(),
+        ],
+    ]])->assertAccepted();
+
+    expect(projectedQty($this->business, 'product-loss', 'wh-1'))->toBe(17.0);
+});
+
 test('a product breakdown subtracts source stock and adds target stock', function () {
     StockProjection::query()->create([
         'business_id' => $this->business->id,
@@ -320,6 +445,133 @@ test('a product breakdown subtracts source stock and adds target stock', functio
 
     expect((float) $box->qty)->toBe(2.0)
         ->and((float) $single->qty)->toBe(25.0);
+});
+
+test('deleting stock operations reverses movement adjustment loss and breakdown deltas', function () {
+    foreach ([
+        ['product_external_id' => 'product-reverse-movement', 'warehouse_external_id' => 'wh-central', 'qty' => 50],
+        ['product_external_id' => 'product-reverse-adjustment', 'warehouse_external_id' => 'wh-1', 'qty' => 30],
+        ['product_external_id' => 'product-reverse-loss', 'warehouse_external_id' => 'wh-1', 'qty' => 40],
+        ['product_external_id' => 'box-reverse', 'warehouse_external_id' => 'wh-1', 'qty' => 4],
+        ['product_external_id' => 'single-reverse', 'warehouse_external_id' => 'wh-1', 'qty' => 8],
+    ] as $row) {
+        StockProjection::query()->create([
+            'business_id' => $this->business->id,
+            ...$row,
+        ]);
+    }
+
+    pushChanges($this, $this->ownerToken, 'device-projection-reversals', [
+        [
+            'event_id' => 'evt-reverse-movement-create',
+            'entity_type' => 'stock_movements',
+            'entity_id' => 'reverse-movement',
+            'operation' => 'create',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [
+                'productId' => 'product-reverse-movement',
+                'fromWarehouseId' => 'wh-central',
+                'toWarehouseId' => 'wh-pdv',
+                'quantity' => 7,
+                'timestamp' => now()->toIso8601String(),
+            ],
+        ],
+        [
+            'event_id' => 'evt-reverse-adjustment-create',
+            'entity_type' => 'stock_adjustments',
+            'entity_id' => 'reverse-adjustment',
+            'operation' => 'create',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [
+                'productId' => 'product-reverse-adjustment',
+                'warehouseId' => 'wh-1',
+                'quantity' => 25,
+                'changeQuantity' => -5,
+                'previousQuantity' => 30,
+                'reason' => 'Conteo',
+                'timestamp' => now()->toIso8601String(),
+            ],
+        ],
+        [
+            'event_id' => 'evt-reverse-loss-create',
+            'entity_type' => 'product_losses',
+            'entity_id' => 'reverse-loss',
+            'operation' => 'create',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [
+                'productId' => 'product-reverse-loss',
+                'warehouseId' => 'wh-1',
+                'quantity' => 6,
+                'lossType' => 'expired',
+                'timestamp' => now()->toIso8601String(),
+            ],
+        ],
+        [
+            'event_id' => 'evt-reverse-breakdown-create',
+            'entity_type' => 'product_breakdowns',
+            'entity_id' => 'reverse-breakdown',
+            'operation' => 'create',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [
+                'sourceProductId' => 'box-reverse',
+                'targetProductId' => 'single-reverse',
+                'warehouseId' => 'wh-1',
+                'sourceQuantity' => 1,
+                'targetQuantity' => 10,
+                'conversionRatio' => 10,
+                'timestamp' => now()->toIso8601String(),
+            ],
+        ],
+    ])->assertAccepted();
+
+    expect(projectedQty($this->business, 'product-reverse-movement', 'wh-central'))->toBe(43.0)
+        ->and(projectedQty($this->business, 'product-reverse-movement', 'wh-pdv'))->toBe(7.0)
+        ->and(projectedQty($this->business, 'product-reverse-adjustment', 'wh-1'))->toBe(25.0)
+        ->and(projectedQty($this->business, 'product-reverse-loss', 'wh-1'))->toBe(34.0)
+        ->and(projectedQty($this->business, 'box-reverse', 'wh-1'))->toBe(3.0)
+        ->and(projectedQty($this->business, 'single-reverse', 'wh-1'))->toBe(18.0);
+
+    pushChanges($this, $this->ownerToken, 'device-projection-reversals', [
+        [
+            'event_id' => 'evt-reverse-movement-delete',
+            'entity_type' => 'stock_movements',
+            'entity_id' => 'reverse-movement',
+            'operation' => 'delete',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [],
+        ],
+        [
+            'event_id' => 'evt-reverse-adjustment-delete',
+            'entity_type' => 'stock_adjustments',
+            'entity_id' => 'reverse-adjustment',
+            'operation' => 'delete',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [],
+        ],
+        [
+            'event_id' => 'evt-reverse-loss-delete',
+            'entity_type' => 'product_losses',
+            'entity_id' => 'reverse-loss',
+            'operation' => 'delete',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [],
+        ],
+        [
+            'event_id' => 'evt-reverse-breakdown-delete',
+            'entity_type' => 'product_breakdowns',
+            'entity_id' => 'reverse-breakdown',
+            'operation' => 'delete',
+            'occurred_at' => now()->toIso8601String(),
+            'payload' => [],
+        ],
+    ])->assertAccepted();
+
+    expect(projectedQty($this->business, 'product-reverse-movement', 'wh-central'))->toBe(50.0)
+        ->and(projectedQty($this->business, 'product-reverse-movement', 'wh-pdv'))->toBe(0.0)
+        ->and(projectedQty($this->business, 'product-reverse-adjustment', 'wh-1'))->toBe(30.0)
+        ->and(projectedQty($this->business, 'product-reverse-loss', 'wh-1'))->toBe(40.0)
+        ->and(projectedQty($this->business, 'box-reverse', 'wh-1'))->toBe(4.0)
+        ->and(projectedQty($this->business, 'single-reverse', 'wh-1'))->toBe(8.0);
 });
 
 test('a product upsert persists breakdown configuration', function () {

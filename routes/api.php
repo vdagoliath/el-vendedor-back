@@ -1,5 +1,9 @@
 <?php
 
+use App\Http\Controllers\Api\Marketplace\V1\CatalogProductController as MarketplaceCatalogProductController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceOrderController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceQuoteController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceSellerOrderController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedUserController;
 use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
@@ -93,4 +97,32 @@ Route::prefix('v1')
                 Route::post('sessions/{externalId}/master/release', [CashRegisterSessionController::class, 'releaseMaster'])
                     ->name('sessions.master.release');
             });
+    });
+
+Route::prefix('marketplace/v1')
+    ->name('api.marketplace.v1.')
+    ->group(function (): void {
+        Route::prefix('catalog')
+            ->name('catalog.')
+            ->group(function (): void {
+                Route::get('products', [MarketplaceCatalogProductController::class, 'index'])
+                    ->name('products.index');
+                Route::get('products/{publication}', [MarketplaceCatalogProductController::class, 'show'])
+                    ->whereNumber('publication')
+                    ->name('products.show');
+            });
+
+        Route::post('quotes', [MarketplaceQuoteController::class, 'store'])
+            ->name('quotes.store');
+        Route::post('quotes/{quote}/reserve', [MarketplaceQuoteController::class, 'reserve'])
+            ->whereNumber('quote')
+            ->name('quotes.reserve');
+        Route::post('quotes/{quote}/confirm', [MarketplaceQuoteController::class, 'confirm'])
+            ->whereNumber('quote')
+            ->name('quotes.confirm');
+        Route::get('orders/{orderNumber}', [MarketplaceOrderController::class, 'show'])
+            ->name('orders.show');
+        Route::post('seller-orders/{sellerOrder}/accept', [MarketplaceSellerOrderController::class, 'accept'])
+            ->whereNumber('sellerOrder')
+            ->name('seller-orders.accept');
     });
