@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasServerVersion;
 use Database\Factories\MarketplaceProductPublicationFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -13,6 +14,8 @@ class MarketplaceProductPublication extends Model
     /** @use HasFactory<MarketplaceProductPublicationFactory> */
     use HasFactory;
 
+    use HasServerVersion;
+
     public const string StatusDraft = 'draft';
 
     public const string StatusPublished = 'published';
@@ -23,6 +26,7 @@ class MarketplaceProductPublication extends Model
 
     protected $fillable = [
         'business_id',
+        'server_version',
         'product_external_id',
         'warehouse_external_id',
         'status',

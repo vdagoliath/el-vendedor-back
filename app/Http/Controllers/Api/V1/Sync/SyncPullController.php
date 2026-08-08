@@ -11,6 +11,7 @@ use App\Models\Contact;
 use App\Models\Device;
 use App\Models\Employee;
 use App\Models\Expense;
+use App\Models\MarketplaceProductPublication;
 use App\Models\MetricsSnapshot;
 use App\Models\PointOfSale;
 use App\Models\Product;
@@ -69,6 +70,7 @@ class SyncPullController extends Controller
         'weight_journals',
         'contacts',
         'products',
+        'marketplace_product_publications',
         'product_batches',
         'stock_movements',
         'stock_adjustments',
@@ -282,6 +284,7 @@ class SyncPullController extends Controller
             'weight_journals' => ['table' => 'weight_journals', 'where' => 'business_id', 'value' => $business->id],
             'contacts' => ['table' => 'contacts', 'where' => 'business_id', 'value' => $business->id],
             'products' => ['table' => 'products', 'where' => 'business_id', 'value' => $business->id],
+            'marketplace_product_publications' => ['table' => 'marketplace_product_publications', 'where' => 'business_id', 'value' => $business->id],
             'product_batches' => ['table' => 'product_batches', 'where' => 'business_id', 'value' => $business->id],
             'stock_movements' => ['table' => 'stock_movements', 'where' => 'business_id', 'value' => $business->id],
             'stock_adjustments' => ['table' => 'stock_adjustments', 'where' => 'business_id', 'value' => $business->id],
@@ -383,6 +386,7 @@ class SyncPullController extends Controller
             'weight_journals' => WeightJournal::class,
             'contacts' => Contact::class,
             'products' => Product::class,
+            'marketplace_product_publications' => MarketplaceProductPublication::class,
             'product_batches' => ProductBatch::class,
             'stock_movements' => StockMovement::class,
             'stock_adjustments' => StockAdjustment::class,
@@ -453,6 +457,7 @@ class SyncPullController extends Controller
             'weight_journals' => $this->toWeightJournalPayload($row),
             'contacts' => $this->toContactPayload($row),
             'products' => $this->toProductPayload($row),
+            'marketplace_product_publications' => $this->toMarketplaceProductPublicationPayload($row),
             'product_batches' => $this->toProductBatchPayload($row),
             'stock_movements' => $this->toStockMovementPayload($row),
             'stock_adjustments' => $this->toStockAdjustmentPayload($row),
@@ -470,9 +475,9 @@ class SyncPullController extends Controller
         }
 
         return [
-            'event_id' => $row->last_received_event_id ?? "server:{$entityType}:{$row->external_id}:{$row->updated_at?->timestamp}",
+            'event_id' => $row->last_received_event_id ?? "server:{$entityType}:{$this->entityExternalId($entityType, $row)}:{$row->updated_at?->timestamp}",
             'entity_type' => $entityType,
-            'entity_id' => $entityType === 'business_profile' ? 'current_business' : $row->external_id,
+            'entity_id' => $entityType === 'business_profile' ? 'current_business' : $this->entityExternalId($entityType, $row),
             'operation' => $operation,
             'occurred_at' => $occurredAt,
             'payload' => $payload,
@@ -531,6 +536,7 @@ class SyncPullController extends Controller
             'weight_journals' => $this->getMaterializedEntityChanges(WeightJournal::class, 'weight_journals', $business, $cursor, $responseBoundary, $limit, fn (WeightJournal $m) => $this->toWeightJournalPayload($m)),
             'contacts' => $this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $cursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)),
             'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
+            'marketplace_product_publications' => $this->getMaterializedEntityChanges(MarketplaceProductPublication::class, 'marketplace_product_publications', $business, $cursor, $responseBoundary, $limit, fn (MarketplaceProductPublication $m) => $this->toMarketplaceProductPublicationPayload($m)),
             'product_batches' => $this->getMaterializedEntityChanges(ProductBatch::class, 'product_batches', $business, $cursor, $responseBoundary, $limit, fn (ProductBatch $m) => $this->toProductBatchPayload($m)),
             'stock_movements' => $this->getMaterializedEntityChanges(StockMovement::class, 'stock_movements', $business, $cursor, $responseBoundary, $limit, fn (StockMovement $m) => $this->toStockMovementPayload($m)),
             'stock_adjustments' => $this->getMaterializedEntityChanges(StockAdjustment::class, 'stock_adjustments', $business, $cursor, $responseBoundary, $limit, fn (StockAdjustment $m) => $this->toStockAdjustmentPayload($m)),
@@ -804,6 +810,27 @@ class SyncPullController extends Controller
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    private function toMarketplaceProductPublicationPayload(MarketplaceProductPublication $publication): array
+    {
+        return [
+            'id' => $publication->id,
+            'productId' => $publication->product_external_id,
+            'warehouseId' => $publication->warehouse_external_id,
+            'status' => $publication->status,
+            'publicTitle' => $publication->public_title,
+            'publicDescription' => $publication->public_description,
+            'publicPrice' => (float) $publication->public_price,
+            'currency' => $publication->currency,
+            'images' => $publication->images ?? [],
+            'metadata' => $publication->metadata ?? [],
+            'createdAt' => $publication->created_at?->toIso8601String(),
+            'updatedAt' => $publication->updated_at?->toIso8601String(),
+        ];
+    }
+
+    /**
      * Convert the current backend business profile to sync payload format.
      *
      * @return array<string, mixed>
@@ -840,8 +867,12 @@ class SyncPullController extends Controller
         int $limit,
         callable $toPayload
     ): Collection {
-        $query = $modelClass::query()
-            ->withTrashed()
+        $query = $modelClass::query();
+        if (in_array(SoftDeletes::class, class_uses_recursive($modelClass), true)) {
+            $query->withTrashed();
+        }
+
+        $query
             ->where('business_id', $business->id)
             ->where('updated_at', '<=', $responseBoundary);
 
@@ -857,19 +888,29 @@ class SyncPullController extends Controller
 
         return $records->map(function ($record) use ($entityType, $toPayload): array {
             $occurredAt = $record->source_updated_at ?? $record->updated_at ?? $record->created_at;
+            $entityId = $this->entityExternalId($entityType, $record);
 
             return [
                 'event_id' => $record->last_received_event_id
-                    ?? "server:{$entityType}:{$record->external_id}:{$record->updated_at?->timestamp}",
+                    ?? "server:{$entityType}:{$entityId}:{$record->updated_at?->timestamp}",
                 'entity_type' => $entityType,
-                'entity_id' => $record->external_id,
-                'operation' => $record->deleted_at ? 'delete' : 'upsert',
+                'entity_id' => $entityId,
+                'operation' => (isset($record->deleted_at) && $record->deleted_at) ? 'delete' : 'upsert',
                 'occurred_at' => $occurredAt?->toIso8601String(),
                 'cursor_at' => ($record->updated_at ?? $occurredAt ?? $record->created_at)?->toIso8601String(),
                 'cursor_id' => $record->id,
                 'payload' => $toPayload($record),
             ];
         });
+    }
+
+    private function entityExternalId(string $entityType, $row): string
+    {
+        if ($entityType === 'marketplace_product_publications') {
+            return (string) $row->product_external_id;
+        }
+
+        return (string) $row->external_id;
     }
 
     /** @return array<string, mixed> */

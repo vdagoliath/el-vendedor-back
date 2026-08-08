@@ -14,6 +14,7 @@ use App\Modules\Inventory\Contracts\InventoryReservationService;
 use App\Support\Inventory\InventoryProjector;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 
 class CreateSaleFromMarketplaceSellerOrderAction
@@ -45,10 +46,10 @@ class CreateSaleFromMarketplaceSellerOrderAction
                 ]);
             }
 
-            $this->assertReservationCanBeConverted($lockedSellerOrder);
+            $reservation = $this->assertReservationCanBeConverted($lockedSellerOrder);
 
             $warehouseExternalId = $this->singleWarehouseExternalId($lockedSellerOrder->lines);
-            $this->assertPhysicalStockCoversLines($lockedSellerOrder, $warehouseExternalId);
+            $this->assertStockCanCoverLines($lockedSellerOrder, $reservation, $warehouseExternalId);
 
             $sale = $this->createSale($lockedSellerOrder, $warehouseExternalId);
             $this->createSaleLines($sale, $lockedSellerOrder->lines);
@@ -64,7 +65,7 @@ class CreateSaleFromMarketplaceSellerOrderAction
                 $eventId,
             );
 
-            $this->reservationService->confirm($lockedSellerOrder->reservation);
+            $this->confirmReservationForAcceptedSellerOrder($reservation);
 
             $previousSellerStatus = $lockedSellerOrder->status;
             $lockedSellerOrder->forceFill([
@@ -86,21 +87,23 @@ class CreateSaleFromMarketplaceSellerOrderAction
         return $sale;
     }
 
-    private function assertReservationCanBeConverted(SellerOrder $sellerOrder): void
+    private function assertReservationCanBeConverted(SellerOrder $sellerOrder): InventoryReservation
     {
         $reservation = $sellerOrder->reservation;
 
         if (! $reservation instanceof InventoryReservation) {
             throw ValidationException::withMessages([
-                'reservation' => 'The seller order does not have an inventory reservation.',
+                'reservation' => 'La venta de Global no tiene una reserva de inventario asociada.',
             ]);
         }
 
-        if ($reservation->status !== InventoryReservation::StatusActive || $reservation->expires_at <= now()) {
+        if (! in_array($reservation->status, [InventoryReservation::StatusActive, InventoryReservation::StatusExpired], true)) {
             throw ValidationException::withMessages([
-                'reservation' => 'The seller order inventory reservation is no longer active.',
+                'reservation' => 'La reserva de inventario de esta venta ya no se puede convertir.',
             ]);
         }
+
+        return $reservation;
     }
 
     /**
@@ -123,13 +126,16 @@ class CreateSaleFromMarketplaceSellerOrderAction
         return (string) $warehouses->first();
     }
 
-    private function assertPhysicalStockCoversLines(SellerOrder $sellerOrder, string $warehouseExternalId): void
-    {
+    private function assertStockCanCoverLines(
+        SellerOrder $sellerOrder,
+        InventoryReservation $reservation,
+        string $warehouseExternalId
+    ): void {
         $requiredByProduct = $sellerOrder->lines
             ->groupBy('product_external_id')
             ->map(fn (Collection $lines): float => (float) $lines->sum(fn (SellerOrderLine $line): float => (float) $line->quantity));
 
-        $availableByProduct = StockProjection::query()
+        $stockByProduct = StockProjection::query()
             ->where('business_id', $sellerOrder->business_id)
             ->where('warehouse_external_id', $warehouseExternalId)
             ->whereIn('product_external_id', $requiredByProduct->keys()->all())
@@ -137,14 +143,65 @@ class CreateSaleFromMarketplaceSellerOrderAction
             ->get(['product_external_id', 'qty'])
             ->keyBy('product_external_id');
 
-        foreach ($requiredByProduct as $productExternalId => $requiredQuantity) {
-            $physicalQuantity = (float) ($availableByProduct->get($productExternalId)?->qty ?? 0);
+        $activeReservationRows = $this->activeReservationRowsFor($sellerOrder, $warehouseExternalId, $requiredByProduct->keys()->all());
+        $sellerReservationIsStillHoldingStock = $reservation->status === InventoryReservation::StatusActive
+            && $reservation->expires_at !== null
+            && $reservation->expires_at->isFuture();
 
-            if ($physicalQuantity < $requiredQuantity) {
+        foreach ($requiredByProduct as $productExternalId => $requiredQuantity) {
+            $physicalQuantity = (float) ($stockByProduct->get($productExternalId)?->qty ?? 0);
+            $reservedQuantity = (float) $activeReservationRows
+                ->where('product_external_id', $productExternalId)
+                ->reject(fn ($line): bool => $sellerReservationIsStillHoldingStock
+                    && (int) $line->inventory_reservation_id === (int) $reservation->id)
+                ->sum(fn ($line): float => (float) $line->quantity);
+            $availableQuantity = $physicalQuantity - $reservedQuantity;
+
+            if ($availableQuantity < $requiredQuantity) {
                 throw ValidationException::withMessages([
-                    'inventory' => "Insufficient physical stock for product [{$productExternalId}] in warehouse [{$warehouseExternalId}].",
+                    'inventory' => "No hay stock disponible suficiente para el producto [{$productExternalId}] en el almacén [{$warehouseExternalId}].",
                 ]);
             }
+        }
+    }
+
+    /**
+     * @param array<int, string> $productExternalIds
+     */
+    private function activeReservationRowsFor(SellerOrder $sellerOrder, string $warehouseExternalId, array $productExternalIds): Collection
+    {
+        return InventoryReservation::query()
+            ->where('business_id', $sellerOrder->business_id)
+            ->where('status', InventoryReservation::StatusActive)
+            ->where('expires_at', '>', now())
+            ->whereHas('lines', function (Builder $query) use ($warehouseExternalId, $productExternalIds): void {
+                $query
+                    ->where('warehouse_external_id', $warehouseExternalId)
+                    ->whereIn('product_external_id', $productExternalIds);
+            })
+            ->with(['lines' => function ($query) use ($warehouseExternalId, $productExternalIds): void {
+                $query
+                    ->where('warehouse_external_id', $warehouseExternalId)
+                    ->whereIn('product_external_id', $productExternalIds);
+            }])
+            ->lockForUpdate()
+            ->get()
+            ->flatMap(fn (InventoryReservation $reservation): Collection => $reservation->lines);
+    }
+
+    private function confirmReservationForAcceptedSellerOrder(InventoryReservation $reservation): void
+    {
+        if ($reservation->status === InventoryReservation::StatusActive) {
+            $this->reservationService->confirm($reservation);
+
+            return;
+        }
+
+        if ($reservation->status === InventoryReservation::StatusExpired) {
+            $reservation->forceFill([
+                'status' => InventoryReservation::StatusConfirmed,
+                'confirmed_at' => now(),
+            ])->save();
         }
     }
 
