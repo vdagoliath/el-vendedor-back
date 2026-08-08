@@ -13,3 +13,8 @@ Schedule::command('sync:prune-events --days=180')
     ->weeklyOn(0, '03:00')
     ->onOneServer()
     ->withoutOverlapping();
+
+Schedule::command('inventory:expire-reservations')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();

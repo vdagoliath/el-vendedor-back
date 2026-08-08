@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\Category;
 use App\Models\Contact;
 use App\Models\Employee;
+use App\Models\MarketplaceProductPublication;
 use App\Models\MetricsSnapshot;
 use App\Models\PointOfSale;
 use App\Models\ProductBatch;
@@ -14,6 +15,8 @@ use App\Models\UnitOfMeasure;
 use App\Models\Warehouse;
 use App\Models\WeightJournal;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 class SyncEntityApplier
@@ -31,6 +34,7 @@ class SyncEntityApplier
             'units' => $this->applyUnit($business, $event, $change),
             'warehouses' => $this->applyWarehouse($business, $event, $change),
             'points_of_sale' => $this->applyPointOfSale($business, $event, $change),
+            'marketplace_product_publications' => $this->applyMarketplaceProductPublication($business, $event, $change),
             'product_batches' => $this->applyProductBatch($business, $event, $change),
             'metrics_snapshots' => $this->applyMetricsSnapshot($business, $event, $change),
             'weight_journals' => $this->applyWeightJournal($business, $event, $change),
@@ -161,6 +165,118 @@ class SyncEntityApplier
                 'source_id' => $this->nullableString($payload['sourceId'] ?? null),
             ]
         );
+    }
+
+    private function applyMarketplaceProductPublication(Business $business, SyncReceivedEvent $event, array $change): bool
+    {
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+        $productExternalId = trim((string) ($payload['productId'] ?? $change['entity_id'] ?? ''));
+
+        if ($productExternalId === '') {
+            throw new \RuntimeException('La publicacion Marketplace sincronizada no tiene producto valido.');
+        }
+
+        if (($change['operation'] ?? 'upsert') === 'delete') {
+            MarketplaceProductPublication::query()
+                ->where('business_id', $business->id)
+                ->where('product_external_id', $productExternalId)
+                ->delete();
+
+            return true;
+        }
+
+        $status = trim((string) ($payload['status'] ?? MarketplaceProductPublication::StatusDraft));
+        if (! in_array($status, [
+            MarketplaceProductPublication::StatusDraft,
+            MarketplaceProductPublication::StatusPublished,
+            MarketplaceProductPublication::StatusPaused,
+            MarketplaceProductPublication::StatusArchived,
+        ], true)) {
+            $status = MarketplaceProductPublication::StatusDraft;
+        }
+
+        $images = $this->marketplacePublicationImages($business, $productExternalId, $payload);
+
+        MarketplaceProductPublication::query()->updateOrCreate(
+            [
+                'business_id' => $business->id,
+                'product_external_id' => $productExternalId,
+            ],
+            [
+                'warehouse_external_id' => trim((string) ($payload['warehouseId'] ?? '')),
+                'status' => $status,
+                'public_title' => trim((string) ($payload['publicTitle'] ?? '')),
+                'public_description' => $this->nullableString($payload['publicDescription'] ?? null),
+                'public_price' => is_numeric($payload['publicPrice'] ?? null) ? (float) $payload['publicPrice'] : 0,
+                'currency' => strtoupper(trim((string) ($payload['currency'] ?? 'CUP'))),
+                'images' => $images,
+                'metadata' => is_array($payload['metadata'] ?? null) ? $payload['metadata'] : [],
+            ]
+        );
+
+        return true;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function marketplacePublicationImages(Business $business, string $productExternalId, array $payload): array
+    {
+        $publicImages = collect(is_array($payload['images'] ?? null) ? $payload['images'] : [])
+            ->filter(fn ($image): bool => is_string($image) && preg_match('/^https?:\/\//i', $image) === 1)
+            ->values()
+            ->all();
+
+        $uploads = is_array($payload['imageUploads'] ?? null) ? $payload['imageUploads'] : [];
+        foreach ($uploads as $upload) {
+            if (! is_array($upload)) {
+                continue;
+            }
+
+            $url = $this->storeMarketplacePublicationImage($business, $productExternalId, $upload);
+            if ($url !== null) {
+                $publicImages[] = $url;
+            }
+        }
+
+        return array_values(array_unique($publicImages));
+    }
+
+    private function storeMarketplacePublicationImage(Business $business, string $productExternalId, array $upload): ?string
+    {
+        $rawData = trim((string) ($upload['data'] ?? ''));
+        if ($rawData === '') {
+            return null;
+        }
+
+        if (str_contains($rawData, ',')) {
+            $rawData = substr($rawData, strpos($rawData, ',') + 1);
+        }
+
+        $binary = base64_decode($rawData, true);
+        if ($binary === false || strlen($binary) > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        $contentType = strtolower(trim((string) ($upload['contentType'] ?? 'image/jpeg')));
+        $extension = match ($contentType) {
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            default => 'jpg',
+        };
+
+        $safeProductId = Str::slug($productExternalId) ?: 'product';
+        $path = sprintf(
+            'marketplace/business-%s/products/%s/%s.%s',
+            $business->id,
+            $safeProductId,
+            Str::ulid(),
+            $extension,
+        );
+
+        Storage::disk('public')->put($path, $binary);
+
+        return Storage::disk('public')->url($path);
     }
 
     private function applyMetricsSnapshot(Business $business, SyncReceivedEvent $event, array $change): bool

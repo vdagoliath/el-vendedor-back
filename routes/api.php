@@ -1,11 +1,15 @@
 <?php
 
+use App\Http\Controllers\Api\Marketplace\V1\CatalogProductController as MarketplaceCatalogProductController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceOrderController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceQuoteController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedUserController;
 use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
 use App\Http\Controllers\Api\V1\Auth\RegisteredUserController;
 use App\Http\Controllers\Api\V1\Auth\SellerInvitationController;
 use App\Http\Controllers\Api\V1\CashRegister\CashRegisterSessionController;
+use App\Http\Controllers\Api\V1\Marketplace\SellerOrderController as ApiV1MarketplaceSellerOrderController;
 use App\Http\Controllers\Api\V1\Sync\ReprocessFailedEventsController;
 use App\Http\Controllers\Api\V1\Sync\SyncBootstrapController;
 use App\Http\Controllers\Api\V1\Sync\SyncConflictController;
@@ -75,6 +79,23 @@ Route::prefix('v1')
             });
 
         Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])
+            ->prefix('marketplace')
+            ->name('marketplace.')
+            ->group(function (): void {
+                Route::get('seller-orders', [ApiV1MarketplaceSellerOrderController::class, 'index'])
+                    ->name('seller-orders.index');
+                Route::post('seller-orders/{sellerOrder}/accept', [ApiV1MarketplaceSellerOrderController::class, 'accept'])
+                    ->whereNumber('sellerOrder')
+                    ->name('seller-orders.accept');
+                Route::post('seller-orders/{sellerOrder}/reject', [ApiV1MarketplaceSellerOrderController::class, 'reject'])
+                    ->whereNumber('sellerOrder')
+                    ->name('seller-orders.reject');
+                Route::patch('seller-orders/{sellerOrder}/status', [ApiV1MarketplaceSellerOrderController::class, 'updateStatus'])
+                    ->whereNumber('sellerOrder')
+                    ->name('seller-orders.status.update');
+            });
+
+        Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])
             ->prefix('cash-register')
             ->name('cash-register.')
             ->group(function (): void {
@@ -93,4 +114,31 @@ Route::prefix('v1')
                 Route::post('sessions/{externalId}/master/release', [CashRegisterSessionController::class, 'releaseMaster'])
                     ->name('sessions.master.release');
             });
+    });
+
+Route::prefix('marketplace/v1')
+    ->name('api.marketplace.v1.')
+    ->group(function (): void {
+        Route::prefix('catalog')
+            ->name('catalog.')
+            ->group(function (): void {
+                Route::get('products', [MarketplaceCatalogProductController::class, 'index'])
+                    ->name('products.index');
+                Route::get('products/{publication}', [MarketplaceCatalogProductController::class, 'show'])
+                    ->whereNumber('publication')
+                    ->name('products.show');
+            });
+
+        Route::post('quotes', [MarketplaceQuoteController::class, 'store'])
+            ->name('quotes.store');
+        Route::post('quotes/{quote}/reserve', [MarketplaceQuoteController::class, 'reserve'])
+            ->whereNumber('quote')
+            ->name('quotes.reserve');
+        Route::post('quotes/{quote}/confirm', [MarketplaceQuoteController::class, 'confirm'])
+            ->whereNumber('quote')
+            ->name('quotes.confirm');
+        Route::get('orders', [MarketplaceOrderController::class, 'index'])
+            ->name('orders.index');
+        Route::get('orders/{orderNumber}', [MarketplaceOrderController::class, 'show'])
+            ->name('orders.show');
     });

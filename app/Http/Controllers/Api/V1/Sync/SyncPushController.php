@@ -31,6 +31,7 @@ class SyncPushController extends Controller
     private const SELLER_FORBIDDEN_ENTITY_TYPES = [
         'purchases',
         'products',
+        'marketplace_product_publications',
         'product_batches',
         'business_profile',
         'categories',
