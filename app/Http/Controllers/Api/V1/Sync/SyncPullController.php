@@ -1030,6 +1030,7 @@ class SyncPullController extends Controller
             'cashRegisterSessionId' => $m->cash_register_session_external_id,
             'warehouseId' => $m->warehouse_external_id,
             'paymentMethod' => $m->payment_method,
+            'paymentBreakdown' => $m->payment_breakdown ?? [],
             'items' => $m->items ?? [],
             'totalSoldQuantity' => (float) $m->total_sold_quantity,
             'totalLossQuantity' => (float) $m->total_loss_quantity,

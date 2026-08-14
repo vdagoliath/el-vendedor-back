@@ -24,6 +24,7 @@ class WeightJournal extends Model
         'cash_register_session_external_id',
         'warehouse_external_id',
         'payment_method',
+        'payment_breakdown',
         'items',
         'total_sold_quantity',
         'total_loss_quantity',
@@ -41,6 +42,7 @@ class WeightJournal extends Model
         return [
             'opened_at' => 'datetime',
             'closed_at' => 'datetime',
+            'payment_breakdown' => 'array',
             'items' => 'array',
             'total_sold_quantity' => 'decimal:4',
             'total_loss_quantity' => 'decimal:4',

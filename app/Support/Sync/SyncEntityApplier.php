@@ -335,6 +335,7 @@ class SyncEntityApplier
                     'cash_register_session_external_id' => $sessionExternalId,
                     'warehouse_external_id' => trim((string) ($payload['warehouseId'] ?? '')),
                     'payment_method' => $this->nullableString($payload['paymentMethod'] ?? null),
+                    'payment_breakdown' => is_array($payload['paymentBreakdown'] ?? null) ? array_values($payload['paymentBreakdown']) : [],
                     'items' => is_array($payload['items'] ?? null) ? array_values($payload['items']) : [],
                     'total_sold_quantity' => $this->decimal($payload['totalSoldQuantity'] ?? 0),
                     'total_loss_quantity' => $this->decimal($payload['totalLossQuantity'] ?? 0),
