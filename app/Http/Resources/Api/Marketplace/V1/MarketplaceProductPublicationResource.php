@@ -27,6 +27,7 @@ class MarketplaceProductPublicationResource extends JsonResource
                 'id' => $business->id,
                 'name' => $business->name,
                 'slug' => $business->slug,
+                'photo' => $business->photo,
             ] : null,
             'product' => [
                 'external_id' => $publication->product_external_id,

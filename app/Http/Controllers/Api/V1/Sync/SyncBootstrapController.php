@@ -35,6 +35,7 @@ class SyncBootstrapController extends Controller
                 'id' => $business->id,
                 'name' => $business->name,
                 'slug' => $business->slug,
+                'photo' => $business->photo,
                 'address' => [
                     'country' => $business->country ?? 'CU',
                     'province' => $business->province ?? '',

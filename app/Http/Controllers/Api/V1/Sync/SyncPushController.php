@@ -20,6 +20,8 @@ use App\Support\Sync\SyncEntityApplier;
 use App\Support\Sync\SyncTransactionApplier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 class SyncPushController extends Controller
@@ -616,9 +618,16 @@ class SyncPushController extends Controller
         // bootstrap push.
         $addressPayload = is_array($payload['address'] ?? null) ? $payload['address'] : null;
         $legacyAddressString = is_string($payload['address'] ?? null) ? $payload['address'] : null;
+        $businessPhotoRemoved = ($payload['businessPhotoRemoved'] ?? false) === true;
+        $businessPhoto = ! $businessPhotoRemoved && array_key_exists('businessPhoto', $payload)
+            ? $this->storeBusinessPhoto($business, $payload['businessPhoto'])
+            : null;
 
         $business->fill([
             'name' => $this->normalizeNullableString($payload['businessName'] ?? null) ?: $business->name,
+            'photo' => $businessPhotoRemoved
+                ? null
+                : ($businessPhoto ?? $business->photo),
             'address' => $this->normalizeNullableString($legacyAddressString) ?? $business->address,
             'country' => $addressPayload !== null
                 ? ($this->normalizeNullableString($addressPayload['country'] ?? null) ?? $business->country)
@@ -646,6 +655,50 @@ class SyncPushController extends Controller
 
         $business->touch();
         $business->save();
+    }
+
+    private function storeBusinessPhoto(Business $business, mixed $photo): ?string
+    {
+        $rawPhoto = $this->normalizeNullableString($photo);
+        if ($rawPhoto === null) {
+            return null;
+        }
+
+        if (preg_match('/^(https?:)?\/\//i', $rawPhoto) === 1 || str_starts_with($rawPhoto, '/storage/')) {
+            return $rawPhoto;
+        }
+
+        $contentType = 'image/jpeg';
+        $rawData = $rawPhoto;
+
+        if (preg_match('/^data:(image\/(?:jpeg|jpg|png|webp));base64,(.+)$/i', $rawPhoto, $matches) === 1) {
+            $contentType = strtolower($matches[1]);
+            $rawData = $matches[2];
+        } elseif (str_contains($rawPhoto, ',')) {
+            $rawData = substr($rawPhoto, strpos($rawPhoto, ',') + 1);
+        }
+
+        $binary = base64_decode($rawData, true);
+        if ($binary === false || strlen($binary) > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        $extension = match ($contentType) {
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            default => 'jpg',
+        };
+
+        $path = sprintf(
+            'marketplace/business-%s/profile/%s.%s',
+            $business->id,
+            Str::ulid(),
+            $extension,
+        );
+
+        Storage::disk('public')->put($path, $binary);
+
+        return Storage::disk('public')->url($path);
     }
 
     private function assertProductCodeIsAvailable(Business $business, string $externalId, string $code): void

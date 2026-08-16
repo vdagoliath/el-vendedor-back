@@ -27,6 +27,7 @@ class Business extends Model
     protected $fillable = [
         'name',
         'slug',
+        'photo',
         'server_version',
         'address',
         'country',

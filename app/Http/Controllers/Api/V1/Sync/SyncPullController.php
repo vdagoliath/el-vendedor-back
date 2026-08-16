@@ -839,6 +839,8 @@ class SyncPullController extends Controller
     {
         return [
             'businessName' => $business->name,
+            'businessPhoto' => $business->photo,
+            'businessPhotoRemoved' => $business->photo === null,
             'address' => [
                 'country' => $business->country ?? 'CU',
                 'province' => $business->province ?? '',
