@@ -140,7 +140,8 @@ class InventoryProjector
                 continue;
             }
 
-            $delta = $sign * (float) $amount;
+            $quantity = $this->stockQuantityForLine($business, trim($productId), (float) $amount, $line);
+            $delta = $sign * $quantity;
             if ($delta == 0.0) {
                 continue;
             }
@@ -166,6 +167,53 @@ class InventoryProjector
             ->where('warehouse_external_id', $warehouseExternalId)
             ->lockForUpdate()
             ->first();
+    }
+
+    private function stockQuantityForLine(Business $business, string $productExternalId, float $amount, mixed $line): float
+    {
+        if ($amount <= 0.0) {
+            return 0.0;
+        }
+
+        $purchaseUnit = $this->extract($line, 'unit_of_measurement', 'unitOfMeasurement');
+        if (! is_array($purchaseUnit)) {
+            return $amount;
+        }
+
+        $product = Product::query()
+            ->withTrashed()
+            ->where('business_id', $business->id)
+            ->where('external_id', $productExternalId)
+            ->first(['unit_of_measurement', 'unit_of_measurement_purchase']);
+
+        if (! $product) {
+            return $amount;
+        }
+
+        $stockUnit = is_array($product->unit_of_measurement)
+            ? $product->unit_of_measurement
+            : (is_array($product->unit_of_measurement_purchase) ? $product->unit_of_measurement_purchase : null);
+
+        if (! is_array($stockUnit)) {
+            return $amount;
+        }
+
+        $purchaseCategory = $purchaseUnit['category'] ?? null;
+        $stockCategory = $stockUnit['category'] ?? null;
+        $purchaseRatio = $purchaseUnit['ratio'] ?? null;
+        $stockRatio = $stockUnit['ratio'] ?? null;
+
+        if (
+            ! is_numeric($purchaseRatio) ||
+            ! is_numeric($stockRatio) ||
+            (float) $purchaseRatio <= 0.0 ||
+            (float) $stockRatio <= 0.0 ||
+            $purchaseCategory !== $stockCategory
+        ) {
+            return $amount;
+        }
+
+        return $amount * ((float) $purchaseRatio / (float) $stockRatio);
     }
 
     /**

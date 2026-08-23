@@ -16,6 +16,8 @@ class PurchaseLine extends Model
         'price',
         'amount',
         'sub_total',
+        'unit_of_measure_id',
+        'unit_of_measurement',
         'sort_order',
     ];
 
@@ -25,6 +27,7 @@ class PurchaseLine extends Model
             'price' => 'decimal:4',
             'amount' => 'decimal:4',
             'sub_total' => 'decimal:4',
+            'unit_of_measurement' => 'array',
         ];
     }
 

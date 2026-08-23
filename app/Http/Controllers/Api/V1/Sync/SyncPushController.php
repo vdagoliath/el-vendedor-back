@@ -419,7 +419,53 @@ class SyncPushController extends Controller
             }
         }
 
+        if (is_array($change['payload'] ?? null)) {
+            $change['payload'] = $this->sanitizeMediaPayload($change['entity_type'], $change['payload']);
+        }
+
         return $change;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function sanitizeMediaPayload(string $entityType, array $payload): array
+    {
+        $mediaKeys = match ($entityType) {
+            'products' => [
+                'photos',
+                'featuredPhoto',
+                'photo',
+                'image',
+                'images',
+                'base64String',
+                'dataUrl',
+                'webPath',
+                'filepath',
+                'path',
+            ],
+            'business_profile' => [
+                'businessPhoto',
+                'business_photo',
+                'businessPhotoRemoved',
+                'photo',
+                'image',
+                'logo',
+                'base64String',
+                'dataUrl',
+                'webPath',
+                'filepath',
+                'path',
+            ],
+            default => [],
+        };
+
+        foreach ($mediaKeys as $key) {
+            unset($payload[$key]);
+        }
+
+        return $payload;
     }
 
     /**
@@ -562,6 +608,7 @@ class SyncPushController extends Controller
             'type' => trim((string) ($payload['type'] ?? 'product')) ?: 'product',
             'regular_price' => $this->normalizeDecimal($payload['regular_price'] ?? 0),
             'purchase_price' => $this->normalizeDecimal($payload['purchase_price'] ?? 0),
+            'prices_by_currency' => is_array($payload['pricesByCurrency'] ?? null) ? $payload['pricesByCurrency'] : null,
             'barcode_type' => $this->normalizeNullableString($payload['barcodeType'] ?? null),
             'min_stock' => $this->normalizeNullableDecimal($payload['min_stock'] ?? null),
             'category_external_id' => $this->normalizeNullableString($payload['categoryId'] ?? null),
@@ -850,6 +897,7 @@ class SyncPushController extends Controller
             'type' => $product->type,
             'regular_price' => (float) $product->regular_price,
             'purchase_price' => (float) $product->purchase_price,
+            'pricesByCurrency' => $product->prices_by_currency ?? null,
             'barcodeType' => $product->barcode_type,
             'min_stock' => $product->min_stock !== null ? (float) $product->min_stock : null,
             'categoryId' => $product->category_external_id,

@@ -168,6 +168,7 @@ final class SyncEventReprocessor
             'type' => trim((string) ($payload['type'] ?? 'product')) ?: 'product',
             'regular_price' => $this->decimal($payload['regular_price'] ?? 0),
             'purchase_price' => $this->decimal($payload['purchase_price'] ?? 0),
+            'prices_by_currency' => is_array($payload['pricesByCurrency'] ?? null) ? $payload['pricesByCurrency'] : null,
             'barcode_type' => $this->nullStr($payload['barcodeType'] ?? null),
             'min_stock' => is_numeric($payload['min_stock'] ?? null) ? (float) $payload['min_stock'] : null,
             'category_external_id' => $this->nullStr($payload['categoryId'] ?? null),
