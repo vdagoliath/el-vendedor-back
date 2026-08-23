@@ -32,6 +32,7 @@ class Product extends Model
         'type',
         'regular_price',
         'purchase_price',
+        'prices_by_currency',
         'barcode_type',
         'min_stock',
         'category_external_id',
@@ -60,6 +61,7 @@ class Product extends Model
         return [
             'regular_price' => 'decimal:4',
             'purchase_price' => 'decimal:4',
+            'prices_by_currency' => 'array',
             'min_stock' => 'decimal:4',
             'unit_of_measurement' => 'array',
             'unit_of_measurement_purchase' => 'array',

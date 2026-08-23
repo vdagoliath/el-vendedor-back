@@ -126,7 +126,7 @@ class InventoryRebuild extends Command
                         if ($purchase->trashed() || $purchase->status !== 'completed' || ! $purchase->warehouse_external_id) {
                             continue;
                         }
-                        $lines = $purchase->lines()->get(['product_external_id', 'amount']);
+                        $lines = $purchase->lines()->get(['product_external_id', 'amount', 'unit_of_measurement']);
                         if (! $dryRun) {
                             $projector->applyLines($business, $purchase->warehouse_external_id, $lines, +1, 'rebuild:purchase:'.$purchase->external_id);
                         }

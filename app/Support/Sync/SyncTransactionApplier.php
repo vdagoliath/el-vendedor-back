@@ -92,8 +92,10 @@ class SyncTransactionApplier
             'warehouse_external_id' => $this->nullStr($payload['warehouseId'] ?? null),
             'cash_register_session_id' => $this->nullStr($payload['cashRegisterSessionId'] ?? null),
             'total' => $this->decimal($payload['total'] ?? 0),
+            'total_base' => $this->nullableDecimal($payload['totalBase'] ?? null),
             'status' => $this->nullStr($payload['status'] ?? 'completed') ?? 'completed',
             'currency' => $this->nullStr($payload['currency'] ?? null),
+            'exchange_rate_from_base' => $this->nullableDecimal($payload['exchangeRateFromBase'] ?? null),
             'payment_method' => $this->nullStr($payload['paymentMethod'] ?? null),
             'credit_balance' => isset($payload['creditBalance']) ? $this->decimal($payload['creditBalance']) : null,
             'payment_breakdown' => is_array($payload['paymentBreakdown'] ?? null) ? $payload['paymentBreakdown'] : null,
@@ -175,7 +177,7 @@ class SyncTransactionApplier
 
         $lines = SaleLine::query()
             ->where('sale_id', $sale->id)
-            ->get(['product_external_id', 'amount']);
+            ->get(['product_external_id', 'amount', 'unit_of_measurement']);
 
         $this->projector->applyLines(
             $business,
@@ -294,7 +296,7 @@ class SyncTransactionApplier
 
         $lines = PurchaseLine::query()
             ->where('purchase_id', $purchase->id)
-            ->get(['product_external_id', 'amount']);
+            ->get(['product_external_id', 'amount', 'unit_of_measurement']);
 
         $this->projector->applyLines(
             $business,
@@ -811,15 +813,26 @@ class SyncTransactionApplier
                 continue;
             }
 
-            $lineModelClass::query()->create([
+            $attributes = [
                 $foreignKey => $parentId,
                 'product_external_id' => $this->nullStr($line['productId'] ?? null),
                 'product_title' => $this->nullStr($line['productTitle'] ?? null),
                 'price' => $this->decimal($line['price'] ?? 0),
+                'price_base' => $this->nullableDecimal($line['priceBase'] ?? null),
                 'amount' => $this->decimal($line['amount'] ?? 0),
                 'sub_total' => $this->decimal($line['subTotal'] ?? (($line['price'] ?? 0) * ($line['amount'] ?? 0))),
+                'sub_total_base' => $this->nullableDecimal($line['subTotalBase'] ?? null),
+                'currency' => $this->nullStr($line['currency'] ?? null),
+                'exchange_rate_from_base' => $this->nullableDecimal($line['exchangeRateFromBase'] ?? null),
                 'sort_order' => $index,
-            ]);
+            ];
+
+            if (in_array($lineModelClass, [SaleLine::class, PurchaseLine::class], true)) {
+                $attributes['unit_of_measure_id'] = $this->nullStr($line['unitOfMeasureId'] ?? ($line['unitOfMeasurement']['_id'] ?? null));
+                $attributes['unit_of_measurement'] = is_array($line['unitOfMeasurement'] ?? null) ? $line['unitOfMeasurement'] : null;
+            }
+
+            $lineModelClass::query()->create($attributes);
         }
     }
 
@@ -850,6 +863,15 @@ class SyncTransactionApplier
     private function decimal(mixed $value): float
     {
         return is_numeric($value) ? (float) $value : 0.0;
+    }
+
+    private function nullableDecimal(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return is_numeric($value) ? (float) $value : null;
     }
 
     /**

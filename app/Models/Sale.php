@@ -24,8 +24,10 @@ class Sale extends Model
         'warehouse_external_id',
         'cash_register_session_id',
         'total',
+        'total_base',
         'status',
         'currency',
+        'exchange_rate_from_base',
         'payment_method',
         'credit_balance',
         'payment_breakdown',
@@ -47,6 +49,8 @@ class Sale extends Model
     {
         return [
             'total' => 'decimal:2',
+            'total_base' => 'decimal:2',
+            'exchange_rate_from_base' => 'decimal:6',
             'credit_balance' => 'decimal:2',
             'payment_breakdown' => 'array',
             'amount_received' => 'decimal:2',
