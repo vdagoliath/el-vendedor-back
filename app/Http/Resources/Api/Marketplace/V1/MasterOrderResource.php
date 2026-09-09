@@ -90,5 +90,4 @@ class MasterOrderResource extends JsonResource
             'created_at' => $history->created_at?->toIso8601String(),
         ];
     }
-
 }

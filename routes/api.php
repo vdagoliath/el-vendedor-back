@@ -1,8 +1,11 @@
 <?php
 
 use App\Http\Controllers\Api\Marketplace\V1\CatalogProductController as MarketplaceCatalogProductController;
+use App\Http\Controllers\Api\Marketplace\V1\ConsumerAuthController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceCurrencyController;
 use App\Http\Controllers\Api\Marketplace\V1\MarketplaceOrderController;
 use App\Http\Controllers\Api\Marketplace\V1\MarketplaceQuoteController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceRateController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedUserController;
 use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
@@ -141,4 +144,28 @@ Route::prefix('marketplace/v1')
             ->name('orders.index');
         Route::get('orders/{orderNumber}', [MarketplaceOrderController::class, 'show'])
             ->name('orders.show');
+
+        // Auth de consumidor (reutiliza `users` v1; tokens con ability `consumer`).
+        Route::prefix('auth')
+            ->name('auth.')
+            ->group(function (): void {
+                Route::post('register', [ConsumerAuthController::class, 'register'])
+                    ->middleware('throttle:6,1')
+                    ->name('register');
+                Route::post('login', [ConsumerAuthController::class, 'login'])
+                    ->middleware('throttle:login')
+                    ->name('login');
+
+                Route::middleware(['auth:sanctum', 'ability:consumer'])
+                    ->group(function (): void {
+                        Route::get('me', [ConsumerAuthController::class, 'me'])->name('me');
+                        Route::post('logout', [ConsumerAuthController::class, 'logout'])->name('logout');
+                    });
+            });
+
+        // Monedas y tasas de visualizacion gestionadas por el backend.
+        Route::get('currencies', [MarketplaceCurrencyController::class, 'index'])
+            ->name('currencies.index');
+        Route::get('rates', [MarketplaceRateController::class, 'show'])
+            ->name('rates.show');
     });
