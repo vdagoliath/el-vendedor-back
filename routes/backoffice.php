@@ -9,6 +9,8 @@ use App\Http\Controllers\Backoffice\CurrentBusinessMemberController;
 use App\Http\Controllers\Backoffice\ExpenseController;
 use App\Http\Controllers\Backoffice\InventoryController;
 use App\Http\Controllers\Backoffice\LicensePricingController;
+use App\Http\Controllers\Backoffice\MarketplaceCategoryController;
+use App\Http\Controllers\Backoffice\MarketplaceCurrencyController;
 use App\Http\Controllers\Backoffice\PointOfSaleController;
 use App\Http\Controllers\Backoffice\ProductController;
 use App\Http\Controllers\Backoffice\ProductLossController;
@@ -33,6 +35,20 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::get('access', [BackofficeUserController::class, 'index'])->name('access.index');
         Route::post('access', [BackofficeUserController::class, 'store'])->name('access.store');
         Route::patch('access/{user}', [BackofficeUserController::class, 'update'])->name('access.update');
+        Route::prefix('marketplace')
+            ->name('marketplace.')
+            ->group(function (): void {
+                Route::get('currencies', [MarketplaceCurrencyController::class, 'index'])->name('currencies.index');
+                Route::post('currencies', [MarketplaceCurrencyController::class, 'store'])->name('currencies.store');
+                Route::put('currencies/{currency}', [MarketplaceCurrencyController::class, 'update'])->name('currencies.update');
+                Route::delete('currencies/{currency}', [MarketplaceCurrencyController::class, 'destroy'])->name('currencies.destroy');
+
+                Route::get('categories', [MarketplaceCategoryController::class, 'index'])->name('categories.index');
+                Route::post('categories', [MarketplaceCategoryController::class, 'store'])->name('categories.store');
+                Route::put('categories/{category}', [MarketplaceCategoryController::class, 'update'])->name('categories.update');
+                Route::delete('categories/{category}', [MarketplaceCategoryController::class, 'destroy'])->name('categories.destroy');
+            });
+
         Route::put('license-pricing/config', [LicensePricingController::class, 'updateConfig'])->name('license-pricing.config.update');
         Route::post('license-pricing/rules', [LicensePricingController::class, 'store'])->name('license-pricing.rules.store');
         Route::put('license-pricing/rules/{licensePricingRule}', [LicensePricingController::class, 'update'])->name('license-pricing.rules.update');
