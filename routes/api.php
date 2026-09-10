@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\Marketplace\V1\CatalogProductController as MarketplaceCatalogProductController;
 use App\Http\Controllers\Api\Marketplace\V1\ConsumerAuthController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceCategoryController;
 use App\Http\Controllers\Api\Marketplace\V1\MarketplaceCurrencyController;
 use App\Http\Controllers\Api\Marketplace\V1\MarketplaceOrderController;
 use App\Http\Controllers\Api\Marketplace\V1\MarketplaceQuoteController;
@@ -164,6 +165,8 @@ Route::prefix('marketplace/v1')
             });
 
         // Monedas y tasas de visualizacion gestionadas por el backend.
+        Route::get('categories', [MarketplaceCategoryController::class, 'index'])
+            ->name('categories.index');
         Route::get('currencies', [MarketplaceCurrencyController::class, 'index'])
             ->name('currencies.index');
         Route::get('rates', [MarketplaceRateController::class, 'show'])
