@@ -20,8 +20,16 @@ class CatalogProductIndexRequest extends FormRequest
             'q' => ['nullable', 'string', 'max:120'],
             'business_id' => ['nullable', 'integer', 'exists:businesses,id'],
             'in_stock' => ['nullable', 'boolean'],
+            'currency' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ];
+    }
+
+    public function currency(): ?string
+    {
+        $currency = $this->query('currency');
+
+        return is_string($currency) ? strtoupper($currency) : null;
     }
 
     public function perPage(): int

@@ -7,6 +7,7 @@ use App\Http\Requests\Api\Marketplace\V1\CatalogProductIndexRequest;
 use App\Http\Resources\Api\Marketplace\V1\MarketplaceProductPublicationResource;
 use App\Models\MarketplaceProductPublication;
 use App\Modules\Marketplace\Catalog\MarketplaceCatalogService;
+use Illuminate\Http\Request;
 
 class CatalogProductController extends Controller
 {
@@ -18,6 +19,7 @@ class CatalogProductController extends Controller
             'q' => $request->query('q'),
             'business_id' => $request->filled('business_id') ? $request->integer('business_id') : null,
             'in_stock' => $request->boolean('in_stock'),
+            'currency' => $request->currency(),
             'per_page' => $request->perPage(),
             'page' => $request->integer('page', 1),
             'path' => $request->url(),
@@ -27,9 +29,11 @@ class CatalogProductController extends Controller
 
     public function show(
         MarketplaceProductPublication $publication,
-        MarketplaceCatalogService $catalog
+        MarketplaceCatalogService $catalog,
+        Request $request
     ): MarketplaceProductPublicationResource {
-        $publication = $catalog->publishedProduct($publication);
+        $currency = $request->query('currency');
+        $publication = $catalog->publishedProduct($publication, is_string($currency) ? $currency : null);
 
         abort_unless($publication instanceof MarketplaceProductPublication, 404);
 

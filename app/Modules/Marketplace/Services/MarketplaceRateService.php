@@ -20,6 +20,30 @@ final class MarketplaceRateService
     private const STANDARD_CODES = ['CAD', 'RUB', 'MXN', 'UYU'];
 
     /**
+     * Convierte un monto entre monedas usando USD como pivote.
+     * Devuelve null cuando falta alguna de las tasas.
+     */
+    public function convert(float $amount, string $from, string $to): ?float
+    {
+        $from = strtoupper($from);
+        $to = strtoupper($to);
+
+        if ($from === $to) {
+            return round($amount, 2);
+        }
+
+        $rates = $this->rates()['rates'] ?? [];
+        $fromRate = $from === 'USD' ? 1.0 : ($rates[$from] ?? null);
+        $toRate = $to === 'USD' ? 1.0 : ($rates[$to] ?? null);
+
+        if (! is_numeric($fromRate) || ! is_numeric($toRate) || (float) $fromRate <= 0 || (float) $toRate <= 0) {
+            return null;
+        }
+
+        return round(($amount / (float) $fromRate) * (float) $toRate, 2);
+    }
+
+    /**
      * Invalida la cache para forzar una lectura fresca de los proveedores.
      */
     public function forget(): void

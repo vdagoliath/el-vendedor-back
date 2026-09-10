@@ -6,6 +6,7 @@ use App\Models\MarketplaceProductPublication;
 use App\Models\Product;
 use App\Models\Warehouse;
 use App\Modules\Inventory\Contracts\InventoryAvailabilityService;
+use App\Modules\Marketplace\Services\MarketplaceRateService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -14,11 +15,12 @@ use Illuminate\Support\Collection;
 class MarketplaceCatalogService
 {
     public function __construct(
-        private readonly InventoryAvailabilityService $availability
+        private readonly InventoryAvailabilityService $availability,
+        private readonly MarketplaceRateService $rates,
     ) {}
 
     /**
-     * @param  array{q?:string|null, business_id?:int|null, in_stock?:bool, per_page?:int, page?:int, path?:string|null, query?:array<string, mixed>}  $filters
+     * @param  array{q?:string|null, business_id?:int|null, in_stock?:bool, currency?:string|null, per_page?:int, page?:int, path?:string|null, query?:array<string, mixed>}  $filters
      */
     public function products(array $filters = []): LengthAwarePaginatorContract
     {
@@ -55,7 +57,7 @@ class MarketplaceCatalogService
 
         if ($filters['in_stock'] ?? false) {
             $publications = $query->get();
-            $this->hydrateCatalogData($publications);
+            $this->hydrateCatalogData($publications, $filters['currency'] ?? null);
 
             $filtered = $publications
                 ->filter(fn (MarketplaceProductPublication $publication): bool => (float) $publication->available_quantity > 0.0)
@@ -76,19 +78,19 @@ class MarketplaceCatalogService
         }
 
         $paginator = $query->paginate($perPage);
-        $this->hydrateCatalogData($paginator->getCollection());
+        $this->hydrateCatalogData($paginator->getCollection(), $filters['currency'] ?? null);
 
         return $paginator;
     }
 
-    public function publishedProduct(MarketplaceProductPublication $publication): ?MarketplaceProductPublication
+    public function publishedProduct(MarketplaceProductPublication $publication, ?string $currency = null): ?MarketplaceProductPublication
     {
         if ($publication->status !== MarketplaceProductPublication::StatusPublished) {
             return null;
         }
 
         $publication->load('business');
-        $this->hydrateCatalogData(collect([$publication]));
+        $this->hydrateCatalogData(collect([$publication]), $currency);
 
         return $publication;
     }
@@ -96,11 +98,42 @@ class MarketplaceCatalogService
     /**
      * @param  Collection<int, MarketplaceProductPublication>  $publications
      */
-    private function hydrateCatalogData(Collection $publications): void
+    private function hydrateCatalogData(Collection $publications, ?string $currency = null): void
     {
         $this->attachProducts($publications);
         $this->attachWarehouses($publications);
         $this->attachAvailability($publications);
+        $this->attachConvertedPrices($publications, $currency);
+    }
+
+    /**
+     * Convierte public_price/currency a la moneda operativa solicitada.
+     * Si falta la tasa se conserva el precio y la moneda originales.
+     *
+     * @param  Collection<int, MarketplaceProductPublication>  $publications
+     */
+    private function attachConvertedPrices(Collection $publications, ?string $currency): void
+    {
+        $target = $currency !== null ? strtoupper(trim($currency)) : null;
+
+        if ($target === null || $target === '') {
+            return;
+        }
+
+        $publications->each(function (MarketplaceProductPublication $publication) use ($target): void {
+            $source = strtoupper((string) $publication->currency);
+
+            if ($source === $target) {
+                return;
+            }
+
+            $converted = $this->rates->convert((float) $publication->public_price, $source, $target);
+
+            if ($converted !== null) {
+                $publication->public_price = $converted;
+                $publication->currency = $target;
+            }
+        });
     }
 
     /**
