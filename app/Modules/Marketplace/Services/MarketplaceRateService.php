@@ -20,6 +20,14 @@ final class MarketplaceRateService
     private const STANDARD_CODES = ['CAD', 'RUB', 'MXN', 'UYU'];
 
     /**
+     * Invalida la cache para forzar una lectura fresca de los proveedores.
+     */
+    public function forget(): void
+    {
+        Cache::forget(self::CACHE_KEY);
+    }
+
+    /**
      * @return array{
      *     base: string,
      *     updated_at: string,

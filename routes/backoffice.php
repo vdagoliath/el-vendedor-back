@@ -10,7 +10,9 @@ use App\Http\Controllers\Backoffice\ExpenseController;
 use App\Http\Controllers\Backoffice\InventoryController;
 use App\Http\Controllers\Backoffice\LicensePricingController;
 use App\Http\Controllers\Backoffice\MarketplaceCategoryController;
+use App\Http\Controllers\Backoffice\MarketplaceConsumerController;
 use App\Http\Controllers\Backoffice\MarketplaceCurrencyController;
+use App\Http\Controllers\Backoffice\MarketplaceRateController;
 use App\Http\Controllers\Backoffice\PointOfSaleController;
 use App\Http\Controllers\Backoffice\ProductController;
 use App\Http\Controllers\Backoffice\ProductLossController;
@@ -42,6 +44,12 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
                 Route::post('currencies', [MarketplaceCurrencyController::class, 'store'])->name('currencies.store');
                 Route::put('currencies/{currency}', [MarketplaceCurrencyController::class, 'update'])->name('currencies.update');
                 Route::delete('currencies/{currency}', [MarketplaceCurrencyController::class, 'destroy'])->name('currencies.destroy');
+
+                Route::get('rates', [MarketplaceRateController::class, 'index'])->name('rates.index');
+                Route::post('rates/refresh', [MarketplaceRateController::class, 'refresh'])->name('rates.refresh');
+
+                Route::get('consumers', [MarketplaceConsumerController::class, 'index'])->name('consumers.index');
+                Route::post('consumers/{user}/revoke', [MarketplaceConsumerController::class, 'revoke'])->name('consumers.revoke');
 
                 Route::get('categories', [MarketplaceCategoryController::class, 'index'])->name('categories.index');
                 Route::post('categories', [MarketplaceCategoryController::class, 'store'])->name('categories.store');

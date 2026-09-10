@@ -5,6 +5,7 @@ use App\Models\MarketplaceCurrency;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia as Assert;
 
 uses(RefreshDatabase::class);
@@ -75,4 +76,51 @@ it('creates and updates categories with an uploaded image', function () {
 
     expect($category->fresh()->image_url)->toBeNull();
     expect(is_file($imagePath))->toBeFalse();
+});
+
+it('shows display rates and lets a super admin refresh them', function () {
+    Http::fake([
+        'api.qvapay.com/*' => Http::response([
+            'BANK_CUP' => ['average' => 120.5, 'updated_at' => '2026-09-09T00:00:00Z'],
+        ]),
+        'open.er-api.com/*' => Http::response([
+            'result' => 'success',
+            'rates' => ['CAD' => 1.35, 'MXN' => 19.2],
+        ]),
+    ]);
+
+    $admin = User::factory()->backofficeSuperAdmin()->create();
+
+    $this->actingAs($admin)
+        ->get(route('backoffice.marketplace.rates.index'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('backoffice/MarketplaceRates')
+            ->where('rates.base', 'USD')
+            ->where('rates.rates.CUP', 120.5));
+
+    $this->actingAs($admin)
+        ->post(route('backoffice.marketplace.rates.refresh'))
+        ->assertRedirect(route('backoffice.marketplace.rates.index'));
+});
+
+it('lists consumers with a consumer session and allows revoking them', function () {
+    $admin = User::factory()->backofficeSuperAdmin()->create();
+    $consumer = User::factory()->create(['email' => 'comprador@example.com']);
+    $consumer->createToken('consumer', ['consumer']);
+    User::factory()->create(['email' => 'vendedor@example.com']);
+
+    $this->actingAs($admin)
+        ->get(route('backoffice.marketplace.consumers.index'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('backoffice/MarketplaceConsumers')
+            ->has('consumers.data', 1)
+            ->where('consumers.data.0.email', 'comprador@example.com'));
+
+    $this->actingAs($admin)
+        ->post(route('backoffice.marketplace.consumers.revoke', $consumer))
+        ->assertRedirect(route('backoffice.marketplace.consumers.index'));
+
+    expect($consumer->tokens()->where('name', 'consumer')->count())->toBe(0);
 });
