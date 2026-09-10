@@ -17,7 +17,8 @@ class MarketplaceCategoryResource extends JsonResource
         return [
             'slug' => $this->slug,
             'name' => $this->name,
-            'image_url' => $this->image_url,
+            // Absoluta para consumidores de otro origen (storefront PWA).
+            'image_url' => $this->image_url ? url($this->image_url) : null,
             'color' => $this->color,
             'sort' => $this->sort,
             'is_active' => $this->is_active,

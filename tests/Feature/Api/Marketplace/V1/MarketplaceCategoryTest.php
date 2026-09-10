@@ -44,5 +44,6 @@ it('hides inactive categories and exposes the managed image', function () {
     $response = $this->getJson('/api/marketplace/v1/categories')->assertOk();
 
     expect(collect($response->json('data'))->pluck('slug')->all())->toBe(['alimentos']);
-    expect($response->json('data.0.image_url'))->toBe($category->image_url);
+    expect($response->json('data.0.image_url'))->toBe(url($category->image_url));
+    expect($response->json('data.0.image_url'))->toStartWith('http');
 });
