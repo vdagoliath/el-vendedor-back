@@ -23,6 +23,7 @@ class MarketplaceQuoteController extends Controller
         $result = $engine->quote(new MarketplaceQuoteRequest(
             lines: $request->quoteLines(),
             consumerId: $request->filled('consumer_id') ? $request->integer('consumer_id') : null,
+            currency: $request->currency(),
         ));
 
         return MarketplaceQuoteResource::make($result->quote)->additional([

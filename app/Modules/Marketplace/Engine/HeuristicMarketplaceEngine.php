@@ -21,6 +21,7 @@ use App\Modules\Marketplace\DTOs\MarketplaceQuoteRequest;
 use App\Modules\Marketplace\DTOs\MarketplaceQuoteResult;
 use App\Modules\Marketplace\DTOs\MarketplaceReservationRequest;
 use App\Modules\Marketplace\DTOs\MarketplaceReservationResult;
+use App\Modules\Marketplace\Services\MarketplaceRateService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -30,6 +31,7 @@ class HeuristicMarketplaceEngine implements MarketplaceEngineInterface
     public function __construct(
         private readonly InventoryAvailabilityService $availability,
         private readonly InventoryReservationService $reservations,
+        private readonly MarketplaceRateService $rates,
     ) {}
 
     public function quote(MarketplaceQuoteRequest $request): MarketplaceQuoteResult
@@ -66,7 +68,8 @@ class HeuristicMarketplaceEngine implements MarketplaceEngineInterface
                 ->all()
         );
 
-        $currency = null;
+        $targetCurrency = $request->currency !== null ? strtoupper(trim($request->currency)) : null;
+        $currency = $targetCurrency;
         $subtotal = 0.0;
         $lineSnapshots = [];
 
@@ -81,14 +84,31 @@ class HeuristicMarketplaceEngine implements MarketplaceEngineInterface
                 ]);
             }
 
-            $currency ??= $publication->currency;
-            if ($currency !== $publication->currency) {
-                throw ValidationException::withMessages([
-                    'lines' => 'La cotizacion no puede mezclar monedas.',
-                ]);
+            if ($targetCurrency !== null) {
+                // Moneda operativa: se convierte cada linea a la moneda pedida.
+                $lineCurrency = $targetCurrency;
+            } else {
+                $currency ??= $publication->currency;
+                if ($currency !== $publication->currency) {
+                    throw ValidationException::withMessages([
+                        'lines' => 'La cotizacion no puede mezclar monedas.',
+                    ]);
+                }
+                $lineCurrency = $publication->currency;
             }
 
-            $unitPrice = (float) $publication->public_price;
+            if ($targetCurrency !== null && strtoupper((string) $publication->currency) !== $targetCurrency) {
+                $unitPrice = $this->rates->convert((float) $publication->public_price, (string) $publication->currency, $targetCurrency);
+
+                if ($unitPrice === null) {
+                    throw ValidationException::withMessages([
+                        'quote' => ['No hay tasa disponible para la moneda solicitada.'],
+                    ]);
+                }
+            } else {
+                $unitPrice = (float) $publication->public_price;
+            }
+
             $lineSubtotal = $unitPrice * $quantity;
             $subtotal += $lineSubtotal;
 
@@ -101,7 +121,7 @@ class HeuristicMarketplaceEngine implements MarketplaceEngineInterface
                 'unit_price' => $unitPrice,
                 'quantity' => $quantity,
                 'subtotal' => $lineSubtotal,
-                'currency' => $publication->currency,
+                'currency' => $lineCurrency,
                 'available_at_quote' => $available,
             ];
         }

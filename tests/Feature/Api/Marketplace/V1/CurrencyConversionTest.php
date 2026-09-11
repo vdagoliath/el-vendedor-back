@@ -96,3 +96,33 @@ it('converts the publication detail price as well', function () {
         ->assertJsonPath('data.currency', 'CAD')
         ->assertJsonPath('data.price', 15);
 });
+
+it('creates quotes in the requested operating currency', function () {
+    ccFakeRates();
+    $business = ccBusiness();
+    $publication = ccPublication($business, 'USD', 10.0);
+
+    $this->postJson('/api/marketplace/v1/quotes', [
+        'currency' => 'MXN',
+        'lines' => [['publication_id' => $publication->id, 'quantity' => 2]],
+    ])
+        ->assertCreated()
+        ->assertJsonPath('data.currency', 'MXN')
+        ->assertJsonPath('data.subtotal', 400)
+        ->assertJsonPath('data.grand_total', 400)
+        ->assertJsonPath('data.lines.0.currency', 'MXN')
+        ->assertJsonPath('data.lines.0.unit_price', 200);
+});
+
+it('rejects a quote when the operating currency has no rate', function () {
+    ccFakeRates();
+    $business = ccBusiness();
+    $publication = ccPublication($business, 'USD', 10.0);
+
+    $this->postJson('/api/marketplace/v1/quotes', [
+        'currency' => 'GBP',
+        'lines' => [['publication_id' => $publication->id, 'quantity' => 1]],
+    ])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('quote');
+});

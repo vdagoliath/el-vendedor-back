@@ -18,10 +18,18 @@ class StoreMarketplaceQuoteRequest extends FormRequest
     {
         return [
             'consumer_id' => ['nullable', 'integer'],
+            'currency' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
             'lines' => ['required', 'array', 'min:1', 'max:100'],
             'lines.*.publication_id' => ['required', 'integer'],
             'lines.*.quantity' => ['required', 'numeric', 'min:0.0001'],
         ];
+    }
+
+    public function currency(): ?string
+    {
+        $currency = $this->validated('currency');
+
+        return is_string($currency) ? strtoupper($currency) : null;
     }
 
     /**
