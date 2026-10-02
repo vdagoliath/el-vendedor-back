@@ -19,6 +19,7 @@ class PointOfSale extends Model
         'external_id',
         'server_version',
         'name',
+        'type',
         'warehouse_external_id',
         'employees',
         'source_created_at',

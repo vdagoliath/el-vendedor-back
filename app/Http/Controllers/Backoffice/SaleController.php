@@ -61,7 +61,7 @@ class SaleController extends Controller
     {
         $business = $request->attributes->get('currentBusiness');
 
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics($business), 403);
 
         $sale = $this->syncStore->latestPayloadMap($business, 'sales')->get($entityId);
 
@@ -85,7 +85,7 @@ class SaleController extends Controller
     {
         $business = $request->attributes->get('currentBusiness');
 
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics($business), 403);
 
         return $business;
     }

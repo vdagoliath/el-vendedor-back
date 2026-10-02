@@ -118,6 +118,34 @@ Route::prefix('v1')
                 Route::post('sessions/{externalId}/master/release', [CashRegisterSessionController::class, 'releaseMaster'])
                     ->name('sessions.master.release');
             });
+
+        // Catálogo online: administración del dueño (mismo negocio actual).
+        Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])
+            ->prefix('catalog')
+            ->name('catalog.')
+            ->group(function (): void {
+                Route::get('storefront', [\App\Http\Controllers\Api\V1\Catalog\CatalogStorefrontController::class, 'show'])
+                    ->name('storefront.show');
+                Route::put('storefront', [\App\Http\Controllers\Api\V1\Catalog\CatalogStorefrontController::class, 'update'])
+                    ->name('storefront.update');
+                Route::post('storefront/cover', [\App\Http\Controllers\Api\V1\Catalog\CatalogStorefrontController::class, 'uploadCover'])
+                    ->name('storefront.cover');
+                Route::post('storefront/logo', [\App\Http\Controllers\Api\V1\Catalog\CatalogStorefrontController::class, 'uploadLogo'])
+                    ->name('storefront.logo');
+
+                Route::get('products', [\App\Http\Controllers\Api\V1\Catalog\CatalogProductController::class, 'index'])
+                    ->name('products.index');
+                Route::post('products', [\App\Http\Controllers\Api\V1\Catalog\CatalogProductController::class, 'upsert'])
+                    ->name('products.upsert');
+                Route::post('products/import', [\App\Http\Controllers\Api\V1\Catalog\CatalogProductController::class, 'import'])
+                    ->name('products.import');
+                Route::put('products/{catalogProduct}', [\App\Http\Controllers\Api\V1\Catalog\CatalogProductController::class, 'update'])
+                    ->whereNumber('catalogProduct')
+                    ->name('products.update');
+                Route::delete('products/{catalogProduct}', [\App\Http\Controllers\Api\V1\Catalog\CatalogProductController::class, 'destroy'])
+                    ->whereNumber('catalogProduct')
+                    ->name('products.destroy');
+            });
     });
 
 Route::prefix('marketplace/v1')
@@ -171,4 +199,31 @@ Route::prefix('marketplace/v1')
             ->name('currencies.index');
         Route::get('rates', [MarketplaceRateController::class, 'show'])
             ->name('rates.show');
+    });
+
+/*
+|--------------------------------------------------------------------------
+| Catálogo online por negocio (canal independiente del ecommerce)
+|--------------------------------------------------------------------------
+|
+| Solo lectura y sin autenticación: el subdominio identifica al negocio y los
+| precios son exactamente los que definió el dueño (sin conversión de moneda).
+| Los pedidos NO pasan por aquí: se cierran por WhatsApp con el negocio.
+|
+*/
+Route::prefix('catalog/v1')
+    ->name('api.catalog.v1.')
+    ->group(function (): void {
+        Route::get('storefronts/{subdomain}', [\App\Http\Controllers\Api\Catalog\V1\CatalogStorefrontController::class, 'show'])
+            ->where('subdomain', '[a-z0-9-]+')
+            ->name('storefronts.show');
+
+        Route::get('storefronts/{subdomain}/products', [\App\Http\Controllers\Api\Catalog\V1\CatalogProductController::class, 'index'])
+            ->where('subdomain', '[a-z0-9-]+')
+            ->name('storefronts.products.index');
+
+        Route::get('storefronts/{subdomain}/products/{slug}', [\App\Http\Controllers\Api\Catalog\V1\CatalogProductController::class, 'show'])
+            ->where('subdomain', '[a-z0-9-]+')
+            ->where('slug', '[a-z0-9-]+')
+            ->name('storefronts.products.show');
     });

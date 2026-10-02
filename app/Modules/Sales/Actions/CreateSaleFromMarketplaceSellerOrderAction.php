@@ -103,6 +103,14 @@ class CreateSaleFromMarketplaceSellerOrderAction
             ]);
         }
 
+        // La reserva puede seguir marcada como activa si el job de expiracion aun
+        // no corrio: aceptar una orden vencida consumiria stock ya liberable.
+        if ($reservation->expires_at !== null && $reservation->expires_at->isPast()) {
+            throw ValidationException::withMessages([
+                'reservation' => 'La reserva de inventario de esta venta ha expirado.',
+            ]);
+        }
+
         return $reservation;
     }
 

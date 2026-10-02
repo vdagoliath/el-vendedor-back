@@ -22,7 +22,7 @@ class ExpenseController extends Controller
     {
         $business = $request->attributes->get('currentBusiness');
 
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics($business), 403);
 
         $timezone = $this->resolveTimezone();
         $search = trim($request->string('search')->toString());
@@ -73,7 +73,7 @@ class ExpenseController extends Controller
     {
         $business = $request->attributes->get('currentBusiness');
 
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics($business), 403);
 
         $validated = $request->validate([
             'description' => ['required', 'string', 'max:255'],
@@ -105,7 +105,7 @@ class ExpenseController extends Controller
     {
         $business = $request->attributes->get('currentBusiness');
 
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics($business), 403);
 
         $existing = $this->syncStore->latestPayloadMap($business, 'expenses')->get($entityId);
 
@@ -134,7 +134,7 @@ class ExpenseController extends Controller
     {
         $business = $request->attributes->get('currentBusiness');
 
-        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics(), 403);
+        abort_unless($business instanceof Business && $request->user()->canViewBackofficeAnalytics($business), 403);
 
         $existing = $this->syncStore->latestPayloadMap($business, 'expenses')->get($entityId);
 

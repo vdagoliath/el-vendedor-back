@@ -21,6 +21,8 @@ class Contact extends Model
         'email',
         'id_card',
         'type',
+        'category',
+        'status',
         'source_created_at',
         'source_updated_at',
         'last_received_event_id',
