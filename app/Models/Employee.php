@@ -18,6 +18,7 @@ class Employee extends Model
         'server_version',
         'name',
         'mobile',
+        'role',
         'source_created_at',
         'source_updated_at',
         'last_received_event_id',

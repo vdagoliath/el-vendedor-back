@@ -6,11 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Sync\PullSyncRequest;
 use App\Models\Business;
 use App\Models\CashRegisterSession;
+use App\Models\CatalogProduct;
+use App\Models\CatalogStorefront;
 use App\Models\Category;
 use App\Models\Contact;
 use App\Models\Device;
 use App\Models\Employee;
 use App\Models\Expense;
+use App\Models\Invoice;
 use App\Models\MarketplaceProductPublication;
 use App\Models\MetricsSnapshot;
 use App\Models\PointOfSale;
@@ -19,6 +22,7 @@ use App\Models\ProductBreakdown;
 use App\Models\ProductBatch;
 use App\Models\ProductLoss;
 use App\Models\Purchase;
+use App\Models\RestaurantLayout;
 use App\Models\Sale;
 use App\Models\StockAdjustment;
 use App\Models\StockMovement;
@@ -66,17 +70,21 @@ class SyncPullController extends Controller
         'employees',
         'warehouses',
         'points_of_sale',
+        'restaurant_layouts',
         'cash_register_sessions',
         'weight_journals',
         'contacts',
         'products',
         'marketplace_product_publications',
+        'catalog_storefront',
+        'catalog_products',
         'product_batches',
         'stock_movements',
         'stock_adjustments',
         'product_losses',
         'product_breakdowns',
         'sales',
+        'invoices',
         'purchases',
         'expenses',
         'metrics_snapshots',
@@ -280,11 +288,14 @@ class SyncPullController extends Controller
             'employees' => ['table' => 'employees', 'where' => 'business_id', 'value' => $business->id],
             'warehouses' => ['table' => 'warehouses', 'where' => 'business_id', 'value' => $business->id],
             'points_of_sale' => ['table' => 'points_of_sale', 'where' => 'business_id', 'value' => $business->id],
+            'restaurant_layouts' => ['table' => 'restaurant_layouts', 'where' => 'business_id', 'value' => $business->id],
             'cash_register_sessions' => ['table' => 'cash_register_sessions', 'where' => 'business_id', 'value' => $business->id],
             'weight_journals' => ['table' => 'weight_journals', 'where' => 'business_id', 'value' => $business->id],
             'contacts' => ['table' => 'contacts', 'where' => 'business_id', 'value' => $business->id],
             'products' => ['table' => 'products', 'where' => 'business_id', 'value' => $business->id],
             'marketplace_product_publications' => ['table' => 'marketplace_product_publications', 'where' => 'business_id', 'value' => $business->id],
+            'catalog_storefront' => ['table' => 'catalog_storefronts', 'where' => 'business_id', 'value' => $business->id],
+            'catalog_products' => ['table' => 'catalog_products', 'where' => 'business_id', 'value' => $business->id],
             'product_batches' => ['table' => 'product_batches', 'where' => 'business_id', 'value' => $business->id],
             'stock_movements' => ['table' => 'stock_movements', 'where' => 'business_id', 'value' => $business->id],
             'stock_adjustments' => ['table' => 'stock_adjustments', 'where' => 'business_id', 'value' => $business->id],
@@ -382,11 +393,14 @@ class SyncPullController extends Controller
             'employees' => Employee::class,
             'warehouses' => Warehouse::class,
             'points_of_sale' => PointOfSale::class,
+            'restaurant_layouts' => RestaurantLayout::class,
             'cash_register_sessions' => CashRegisterSession::class,
             'weight_journals' => WeightJournal::class,
             'contacts' => Contact::class,
             'products' => Product::class,
             'marketplace_product_publications' => MarketplaceProductPublication::class,
+            'catalog_storefront' => CatalogStorefront::class,
+            'catalog_products' => CatalogProduct::class,
             'product_batches' => ProductBatch::class,
             'stock_movements' => StockMovement::class,
             'stock_adjustments' => StockAdjustment::class,
@@ -453,11 +467,14 @@ class SyncPullController extends Controller
             'employees' => $this->toEmployeePayload($row),
             'warehouses' => $this->toWarehousePayload($row),
             'points_of_sale' => $this->toPointOfSalePayload($row),
+            'restaurant_layouts' => $this->toRestaurantLayoutPayload($row),
             'cash_register_sessions' => $this->toCashRegisterSessionPayload($row),
             'weight_journals' => $this->toWeightJournalPayload($row),
             'contacts' => $this->toContactPayload($row),
             'products' => $this->toProductPayload($row),
             'marketplace_product_publications' => $this->toMarketplaceProductPublicationPayload($row),
+            'catalog_storefront' => $this->toCatalogStorefrontPayload($row),
+            'catalog_products' => $this->toCatalogProductPayload($row),
             'product_batches' => $this->toProductBatchPayload($row),
             'stock_movements' => $this->toStockMovementPayload($row),
             'stock_adjustments' => $this->toStockAdjustmentPayload($row),
@@ -532,11 +549,15 @@ class SyncPullController extends Controller
             'employees' => $this->getMaterializedEntityChanges(Employee::class, 'employees', $business, $cursor, $responseBoundary, $limit, fn (Employee $m) => $this->toEmployeePayload($m)),
             'warehouses' => $this->getMaterializedEntityChanges(Warehouse::class, 'warehouses', $business, $cursor, $responseBoundary, $limit, fn (Warehouse $m) => $this->toWarehousePayload($m)),
             'points_of_sale' => $this->getMaterializedEntityChanges(PointOfSale::class, 'points_of_sale', $business, $cursor, $responseBoundary, $limit, fn (PointOfSale $m) => $this->toPointOfSalePayload($m)),
+            'restaurant_layouts' => $this->getMaterializedEntityChanges(RestaurantLayout::class, 'restaurant_layouts', $business, $cursor, $responseBoundary, $limit, fn (RestaurantLayout $m) => $this->toRestaurantLayoutPayload($m)),
             'cash_register_sessions' => $this->getMaterializedEntityChanges(CashRegisterSession::class, 'cash_register_sessions', $business, $cursor, $responseBoundary, $limit, fn (CashRegisterSession $m) => $this->toCashRegisterSessionPayload($m)),
             'weight_journals' => $this->getMaterializedEntityChanges(WeightJournal::class, 'weight_journals', $business, $cursor, $responseBoundary, $limit, fn (WeightJournal $m) => $this->toWeightJournalPayload($m)),
             'contacts' => $this->getMaterializedEntityChanges(Contact::class, 'contacts', $business, $cursor, $responseBoundary, $limit, fn (Contact $m) => $this->toContactPayload($m)),
+            'invoices' => $this->getMaterializedEntityChanges(Invoice::class, 'invoices', $business, $cursor, $responseBoundary, $limit, fn (Invoice $m) => $this->toInvoicePayload($m)),
             'products' => $this->getProductChanges($business, $cursor, $responseBoundary, $limit),
             'marketplace_product_publications' => $this->getMaterializedEntityChanges(MarketplaceProductPublication::class, 'marketplace_product_publications', $business, $cursor, $responseBoundary, $limit, fn (MarketplaceProductPublication $m) => $this->toMarketplaceProductPublicationPayload($m)),
+            'catalog_storefront' => $this->getMaterializedEntityChanges(CatalogStorefront::class, 'catalog_storefront', $business, $cursor, $responseBoundary, $limit, fn (CatalogStorefront $m) => $this->toCatalogStorefrontPayload($m)),
+            'catalog_products' => $this->getMaterializedEntityChanges(CatalogProduct::class, 'catalog_products', $business, $cursor, $responseBoundary, $limit, fn (CatalogProduct $m) => $this->toCatalogProductPayload($m)),
             'product_batches' => $this->getMaterializedEntityChanges(ProductBatch::class, 'product_batches', $business, $cursor, $responseBoundary, $limit, fn (ProductBatch $m) => $this->toProductBatchPayload($m)),
             'stock_movements' => $this->getMaterializedEntityChanges(StockMovement::class, 'stock_movements', $business, $cursor, $responseBoundary, $limit, fn (StockMovement $m) => $this->toStockMovementPayload($m)),
             'stock_adjustments' => $this->getMaterializedEntityChanges(StockAdjustment::class, 'stock_adjustments', $business, $cursor, $responseBoundary, $limit, fn (StockAdjustment $m) => $this->toStockAdjustmentPayload($m)),
@@ -832,6 +853,66 @@ class SyncPullController extends Controller
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    private function toCatalogStorefrontPayload(CatalogStorefront $storefront): array
+    {
+        return [
+            'id' => $storefront->id,
+            'subdomain' => $storefront->subdomain,
+            'displayName' => $storefront->display_name,
+            'tagline' => $storefront->tagline,
+            'about' => $storefront->about,
+            'accentColor' => $storefront->accent_color,
+            'accentContrast' => $storefront->accent_contrast,
+            'whatsapp' => (string) $storefront->whatsapp,
+            'phone' => $storefront->phone,
+            'email' => $storefront->email,
+            'address' => $storefront->address,
+            'city' => $storefront->city,
+            'hours' => $storefront->hours ?? [],
+            'social' => $storefront->social ?? [],
+            'currency' => $storefront->currency,
+            'currencySymbol' => $storefront->currency_symbol,
+            'deliveryNote' => $storefront->delivery_note,
+            'paymentNote' => $storefront->payment_note,
+            'coverUrl' => $storefront->cover_url,
+            'logoUrl' => $storefront->logo_url,
+            'isPublished' => (bool) $storefront->is_published,
+            'publishedAt' => $storefront->published_at?->toIso8601String(),
+            'createdAt' => $storefront->created_at?->toIso8601String(),
+            'updatedAt' => $storefront->updated_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function toCatalogProductPayload(CatalogProduct $product): array
+    {
+        return [
+            'id' => $product->id,
+            'productId' => $product->product_external_id,
+            'slug' => $product->slug,
+            'title' => $product->title,
+            'description' => $product->description,
+            'price' => (float) $product->price,
+            'currency' => $product->currency,
+            'unit' => $product->unit,
+            'badge' => $product->badge,
+            'categoryName' => $product->category_name,
+            'categoryEmoji' => $product->category_emoji,
+            'images' => $product->images ?? [],
+            'isVisible' => (bool) $product->is_visible,
+            'isFeatured' => (bool) $product->is_featured,
+            'isAvailable' => (bool) $product->is_available,
+            'sort' => (int) $product->sort,
+            'createdAt' => $product->created_at?->toIso8601String(),
+            'updatedAt' => $product->updated_at?->toIso8601String(),
+        ];
+    }
+
+    /**
      * Convert the current backend business profile to sync payload format.
      *
      * @return array<string, mixed>
@@ -840,7 +921,12 @@ class SyncPullController extends Controller
     {
         return [
             'businessName' => $business->name,
-            'address' => [
+            // `address` viaja como texto (compatibilidad con los clientes que lo
+            // mandan asi); las partes estructuradas van aparte.
+            'address' => (string) ($business->address ?? '') !== ''
+                ? (string) $business->address
+                : ($business->street ?? null),
+            'addressComponents' => [
                 'country' => $business->country ?? 'CU',
                 'province' => $business->province ?? '',
                 'municipality' => $business->municipality ?? '',
@@ -907,8 +993,13 @@ class SyncPullController extends Controller
 
     private function entityExternalId(string $entityType, $row): string
     {
-        if ($entityType === 'marketplace_product_publications') {
+        if ($entityType === 'marketplace_product_publications' || $entityType === 'catalog_products') {
             return (string) $row->product_external_id;
+        }
+
+        // El catálogo online es un singleton por negocio.
+        if ($entityType === 'catalog_storefront') {
+            return 'current_catalog';
         }
 
         return (string) $row->external_id;
@@ -938,6 +1029,55 @@ class SyncPullController extends Controller
             'email' => $m->email,
             'idCard' => $m->id_card,
             'type' => $m->type,
+            'category' => $m->category,
+            'status' => $m->status,
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Payload de una factura. Se devuelve la copia congelada tal cual se recibio
+     * (emisor, receptor, totales, pago y huella) mas las lineas materializadas:
+     * el cliente no debe recalcular nada al reimprimir.
+     *
+     * @return array<string, mixed>
+     */
+    private function toInvoicePayload(Invoice $m): array
+    {
+        return [
+            'contractVersion' => (int) ($m->contract_version ?? 1),
+            'id' => $m->external_id,
+            'documentType' => $m->document_type,
+            'series' => $m->series,
+            'number' => (int) $m->number,
+            'numberPadding' => (int) $m->number_padding,
+            'displayNumber' => $m->display_number,
+            'numberSource' => $m->number_source,
+            'issuedAt' => $m->issued_at?->toIso8601String(),
+            'status' => $m->status,
+            'originalInvoiceId' => $m->original_invoice_external_id,
+            'saleId' => $m->sale_external_id,
+            'issuer' => $m->issuer,
+            'customer' => $m->customer,
+            'currency' => $m->currency,
+            'lines' => $m->lines->map(fn ($line) => [
+                'productId' => $line->product_external_id,
+                'productTitle' => $line->product_title,
+                'quantity' => (float) $line->quantity,
+                'unitPrice' => (float) $line->unit_price,
+                'lineTotal' => (float) $line->line_total,
+                'unitSymbol' => $line->unit_symbol,
+            ])->all(),
+            'totals' => $m->totals,
+            'payment' => $m->payment,
+            'hash' => $m->hash,
+            'reprintCount' => (int) $m->reprint_count,
+            'footer' => $m->footer,
+            'voidedAt' => $m->voided_at?->toIso8601String(),
+            'voidedBy' => $m->voided_by,
+            'voidReason' => $m->void_reason,
+            'createdAt' => ($m->source_created_at ?? $m->created_at)?->toIso8601String(),
+            'createdBy' => $m->created_by,
             'deleted_at' => $m->deleted_at?->toIso8601String(),
         ];
     }
@@ -948,6 +1088,7 @@ class SyncPullController extends Controller
         return [
             'name' => $m->name,
             'mobile' => $m->mobile,
+            'role' => $m->role,
             'deleted_at' => $m->deleted_at?->toIso8601String(),
         ];
     }
@@ -988,6 +1129,7 @@ class SyncPullController extends Controller
         return [
             '_id' => $m->external_id,
             'name' => $m->name,
+            'type' => $m->type ?? 'regular',
             'warehouseId' => $m->warehouse_external_id,
             'employees' => $m->employees ?? [],
             'deleted_at' => $m->deleted_at?->toIso8601String(),
@@ -1019,6 +1161,19 @@ class SyncPullController extends Controller
 
 
     /** @return array<string, mixed> */
+    private function toRestaurantLayoutPayload(RestaurantLayout $m): array
+    {
+        return [
+            '_id' => $m->external_id,
+            'posId' => $m->external_id,
+            'posName' => $m->pos_name,
+            'salons' => $m->salons ?? [],
+            'tables' => $m->tables ?? [],
+            'updatedAt' => $m->updated_at?->toIso8601String(),
+            'deleted_at' => $m->deleted_at?->toIso8601String(),
+        ];
+    }
+
     private function toWeightJournalPayload(WeightJournal $m): array
     {
         return [

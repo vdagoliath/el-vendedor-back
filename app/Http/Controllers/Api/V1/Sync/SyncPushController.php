@@ -40,8 +40,10 @@ class SyncPushController extends Controller
         'units',
         'warehouses',
         'points_of_sale',
+        'restaurant_layouts',
         'employees',
         'expenses',
+        'invoices',
         'license_catalog',
         'license_quote',
         'cash_register_sessions',
@@ -478,6 +480,11 @@ class SyncPushController extends Controller
         if ($change['entity_type'] === 'contacts') {
             $this->assertContactPermission($business, $user, $change, $ability);
 
+            // Los contactos tambien se materializan: el pull los lee de la tabla.
+            if (! $this->entityApplier->apply($business, $event, $change)) {
+                return 'pending_dispatch';
+            }
+
             return 'applied';
         }
 
@@ -527,7 +534,10 @@ class SyncPushController extends Controller
             throw new \RuntimeException('Tu rol actual no puede gestionar proveedores.');
         }
 
-        if ($ability === null && ! $user?->canManageContactTypeInBusiness($business, $normalizedType)) {
+        // Un token sin abilities llega como comodin ('*') y resolveTokenAbility lo
+        // trata como sync:owner, asi que el permiso real del usuario en el negocio
+        // se comprueba siempre (un empleado no puede sincronizar proveedores).
+        if (! $user?->canManageContactTypeInBusiness($business, $normalizedType)) {
             throw new \RuntimeException('Tu rol actual no puede gestionar proveedores.');
         }
     }
@@ -861,6 +871,12 @@ class SyncPushController extends Controller
             return 'sync_permission_denied';
         }
 
+        // Un numero de factura repetido no se reintenta: el hueco o el duplicado
+        // lo tiene que resolver una persona, no un reintento automatico.
+        if (str_contains($message, 'ya existe en esta serie')) {
+            return 'sync_invoice_number_conflict';
+        }
+
         if (str_contains($message, 'no tiene codigo') || str_contains($message, 'no tiene nombre')) {
             return 'sync_invalid_payload';
         }
@@ -877,6 +893,10 @@ class SyncPushController extends Controller
         $message = strtolower(trim($exception->getMessage()));
 
         if (str_contains($message, 'no puede gestionar') || str_contains($message, 'no tiene codigo') || str_contains($message, 'no tiene nombre')) {
+            return false;
+        }
+
+        if (str_contains($message, 'ya existe en esta serie')) {
             return false;
         }
 

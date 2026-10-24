@@ -51,10 +51,14 @@ class RegisterRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
+        // El alta desde la app no siempre envia `locale`: se asume el del sistema.
+        $locale = trim((string) $this->input('locale'));
+
         $this->merge([
             'email' => Str::lower(trim((string) $this->input('email'))),
             'name' => trim((string) $this->input('name')),
             'device_name' => trim((string) $this->input('device_name')),
+            'locale' => $locale !== '' ? $locale : (string) config('app.locale'),
         ]);
     }
 }

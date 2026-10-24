@@ -167,9 +167,15 @@ class User extends Authenticatable
     /**
      * Determine if the user can view backoffice analytics.
      */
-    public function canViewBackofficeAnalytics(): bool
+    public function canViewBackofficeAnalytics(?Business $business = null): bool
     {
-        return $this->getEffectiveBackofficeRole()?->canViewBackofficeAnalytics() ?? false;
+        if ($this->getEffectiveBackofficeRole()?->canViewBackofficeAnalytics() ?? false) {
+            return true;
+        }
+
+        // El dueno del negocio ve la operativa (ventas, compras, inventario...) de
+        // su propio negocio sin necesidad de un rol de plataforma.
+        return $business !== null && $this->ownsBusiness($business);
     }
 
     /**
@@ -217,7 +223,8 @@ class User extends Authenticatable
         }
 
         if ($this->getEffectiveBackofficeRole() === BackofficeRole::Implementer) {
-            return (int) $business->created_by_user_id === (int) $this->getKey();
+            // Un implementador da soporte a cualquier negocio, no solo a los que el creo.
+            return true;
         }
 
         return $this->activeBusinesses()->whereKey($business->getKey())->exists();
@@ -297,7 +304,7 @@ class User extends Authenticatable
         }
 
         if ($this->getEffectiveBackofficeRole() === BackofficeRole::Implementer) {
-            return (int) $business->created_by_user_id === (int) $this->getKey();
+            return true;
         }
 
         return false;

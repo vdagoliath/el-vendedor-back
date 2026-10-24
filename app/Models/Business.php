@@ -116,7 +116,8 @@ class Business extends Model
         }
 
         if ($user->getEffectiveBackofficeRole() === BackofficeRole::Implementer) {
-            return $query->where('created_by_user_id', $user->getKey());
+            // El implementador gestiona el catalogo completo de negocios.
+            return $query;
         }
 
         return $query->whereRaw('1 = 0');

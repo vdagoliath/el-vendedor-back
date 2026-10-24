@@ -63,39 +63,55 @@ Route::middleware(['auth', 'verified', 'backoffice.access'])->prefix('backoffice
         Route::delete('license-pricing/rules/{licensePricingRule}', [LicensePricingController::class, 'destroy'])->name('license-pricing.rules.destroy');
     });
 
-    Route::middleware('current.business')->group(function () {
-        Route::get('preparation', [BusinessPreparationController::class, 'index'])->name('preparation.index');
-        Route::get('products', [ProductController::class, 'index'])->name('products.index');
-        Route::get('sales', [SaleController::class, 'index'])->name('sales.index');
-        Route::get('sales/export', [SaleController::class, 'export'])->name('sales.export');
-        Route::post('sales/{entityId}/return', [SaleController::class, 'markReturned'])->name('sales.return');
-        Route::get('purchases', [PurchaseController::class, 'index'])->name('purchases.index');
-        Route::post('purchases/{entityId}/complete', [PurchaseController::class, 'complete'])->name('purchases.complete');
-        Route::post('purchases/{entityId}/cancel', [PurchaseController::class, 'cancel'])->name('purchases.cancel');
-        Route::delete('purchases/{entityId}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
-        Route::get('inventory', [InventoryController::class, 'index'])->name('inventory.index');
-        Route::get('inventory/export', [InventoryController::class, 'export'])->name('inventory.export');
-        Route::get('stock-movements', [StockMovementController::class, 'index'])->name('stock-movements.index');
-        Route::get('stock-movements/export', [StockMovementController::class, 'export'])->name('stock-movements.export');
-        Route::get('stock-adjustments', [StockAdjustmentController::class, 'index'])->name('stock-adjustments.index');
-        Route::get('stock-adjustments/export', [StockAdjustmentController::class, 'export'])->name('stock-adjustments.export');
-        Route::get('losses', [ProductLossController::class, 'index'])->name('losses.index');
-        Route::get('losses/export', [ProductLossController::class, 'export'])->name('losses.export');
-        Route::get('points-of-sale', [PointOfSaleController::class, 'index'])->name('points-of-sale.index');
-        Route::get('points-of-sale/{posExternalId}/sessions', [PointOfSaleController::class, 'sessions'])
-            ->where('posExternalId', '[A-Za-z0-9_\-]+')
-            ->name('points-of-sale.sessions');
-        Route::get('expenses', [ExpenseController::class, 'index'])->name('expenses.index');
-        Route::post('expenses', [ExpenseController::class, 'store'])->name('expenses.store');
-        Route::put('expenses/{entityId}', [ExpenseController::class, 'update'])->name('expenses.update');
-        Route::delete('expenses/{entityId}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
-        Route::get('team', [CurrentBusinessMemberController::class, 'index'])->name('team.index');
-        Route::post('team', [CurrentBusinessMemberController::class, 'store'])->name('team.store');
-        Route::put('team/members/{member}', [CurrentBusinessMemberController::class, 'update'])->name('team.members.update');
-        Route::delete('team/members/{member}', [CurrentBusinessMemberController::class, 'destroy'])->name('team.members.destroy');
-        Route::put('team/members/{member}/password', [CurrentBusinessMemberController::class, 'updatePassword'])->name('team.members.password.update');
-        Route::post('team/employees', [CurrentBusinessEmployeeController::class, 'store'])->name('team.employees.store');
-        Route::put('team/employees/{entityId}', [CurrentBusinessEmployeeController::class, 'update'])->name('team.employees.update');
-        Route::delete('team/employees/{entityId}', [CurrentBusinessEmployeeController::class, 'destroy'])->name('team.employees.destroy');
-    });
+
+});
+
+/*
+|--------------------------------------------------------------------------
+| Operativa del negocio
+|--------------------------------------------------------------------------
+|
+| Compras, ventas, inventario, equipo y demas paginas del negocio. Las abre el
+| dueno en su propio negocio y el personal de plataforma autorizado; cada
+| controlador valida el acceso con `canViewBackofficeAnalytics($business)` o
+| `canPrepareBusinessForSync($business)`, por eso no pasan por el guardian de
+| rol de plataforma.
+|
+*/
+Route::middleware(['auth', 'verified', 'current.business'])->prefix('backoffice')->name('backoffice.')->group(function () {
+Route::middleware('current.business')->group(function () {
+    Route::get('preparation', [BusinessPreparationController::class, 'index'])->name('preparation.index');
+    Route::get('products', [ProductController::class, 'index'])->name('products.index');
+    Route::get('sales', [SaleController::class, 'index'])->name('sales.index');
+    Route::get('sales/export', [SaleController::class, 'export'])->name('sales.export');
+    Route::post('sales/{entityId}/return', [SaleController::class, 'markReturned'])->name('sales.return');
+    Route::get('purchases', [PurchaseController::class, 'index'])->name('purchases.index');
+    Route::post('purchases/{entityId}/complete', [PurchaseController::class, 'complete'])->name('purchases.complete');
+    Route::post('purchases/{entityId}/cancel', [PurchaseController::class, 'cancel'])->name('purchases.cancel');
+    Route::delete('purchases/{entityId}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
+    Route::get('inventory', [InventoryController::class, 'index'])->name('inventory.index');
+    Route::get('inventory/export', [InventoryController::class, 'export'])->name('inventory.export');
+    Route::get('stock-movements', [StockMovementController::class, 'index'])->name('stock-movements.index');
+    Route::get('stock-movements/export', [StockMovementController::class, 'export'])->name('stock-movements.export');
+    Route::get('stock-adjustments', [StockAdjustmentController::class, 'index'])->name('stock-adjustments.index');
+    Route::get('stock-adjustments/export', [StockAdjustmentController::class, 'export'])->name('stock-adjustments.export');
+    Route::get('losses', [ProductLossController::class, 'index'])->name('losses.index');
+    Route::get('losses/export', [ProductLossController::class, 'export'])->name('losses.export');
+    Route::get('points-of-sale', [PointOfSaleController::class, 'index'])->name('points-of-sale.index');
+    Route::get('points-of-sale/{posExternalId}/sessions', [PointOfSaleController::class, 'sessions'])
+        ->where('posExternalId', '[A-Za-z0-9_\-]+')
+        ->name('points-of-sale.sessions');
+    Route::get('expenses', [ExpenseController::class, 'index'])->name('expenses.index');
+    Route::post('expenses', [ExpenseController::class, 'store'])->name('expenses.store');
+    Route::put('expenses/{entityId}', [ExpenseController::class, 'update'])->name('expenses.update');
+    Route::delete('expenses/{entityId}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
+    Route::get('team', [CurrentBusinessMemberController::class, 'index'])->name('team.index');
+    Route::post('team', [CurrentBusinessMemberController::class, 'store'])->name('team.store');
+    Route::put('team/members/{member}', [CurrentBusinessMemberController::class, 'update'])->name('team.members.update');
+    Route::delete('team/members/{member}', [CurrentBusinessMemberController::class, 'destroy'])->name('team.members.destroy');
+    Route::put('team/members/{member}/password', [CurrentBusinessMemberController::class, 'updatePassword'])->name('team.members.password.update');
+    Route::post('team/employees', [CurrentBusinessEmployeeController::class, 'store'])->name('team.employees.store');
+    Route::put('team/employees/{entityId}', [CurrentBusinessEmployeeController::class, 'update'])->name('team.employees.update');
+    Route::delete('team/employees/{entityId}', [CurrentBusinessEmployeeController::class, 'destroy'])->name('team.employees.destroy');
+});
 });

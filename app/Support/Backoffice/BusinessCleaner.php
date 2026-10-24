@@ -63,6 +63,7 @@ class BusinessCleaner
             'product_batches',
             'cash_register_sessions',
             'weight_journals',
+            'restaurant_layouts',
             'sales',
             'purchases',
             'expenses',
