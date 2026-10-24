@@ -24,7 +24,9 @@ class PullSyncRequest extends FormRequest
     {
         return [
             'device_id' => ['required', 'string', 'max:191'],
-            'cursor' => ['nullable', 'string', 'max:191'],
+            // El cursor en formato v2 es un JSON con un sub-cursor por cada
+            // entidad sincronizable, así que necesita un margen cómodo.
+            'cursor' => ['nullable', 'string', 'max:4096'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:1000'],
         ];
     }

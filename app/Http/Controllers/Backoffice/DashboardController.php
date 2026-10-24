@@ -38,7 +38,7 @@ class DashboardController extends Controller
             ->get();
 
         $sales = $this->syncStore->latestPayloads($business, 'sales')
-            ->filter(fn (array $sale): bool => ($sale['status'] ?? 'pending') === 'completed')
+            ->filter(fn (array $sale): bool => $this->isMetricSale($sale))
             ->values();
 
         $purchases = $this->syncStore->latestPayloads($business, 'purchases')
@@ -55,7 +55,7 @@ class DashboardController extends Controller
         $filteredPurchases = $this->filterBillsByDateRange($purchases, $startDate, $endDate, $timezone);
         $filteredExpenses = $this->filterExpensesByDateRange($expenses, $startDate, $endDate, $timezone);
 
-        $salesTotal = $filteredSales->sum(fn (array $sale): float => (float) ($sale['total'] ?? 0));
+        $salesTotal = $filteredSales->sum(fn (array $sale): float => $this->recognizedSaleAmount($sale));
         $purchasesTotal = $filteredPurchases->sum(fn (array $purchase): float => (float) ($purchase['total'] ?? 0));
         $expensesTotal = $filteredExpenses->sum(fn (array $expense): float => (float) ($expense['amount'] ?? 0));
         $topExpenseCategories = $this->buildTopExpenseCategories($filteredExpenses);
@@ -224,7 +224,7 @@ class DashboardController extends Controller
                 $statsKey = $productId !== '' ? $productId : $label;
                 $sellPrice = (float) ($line['price'] ?? 0);
                 $buyPrice = $product ? (float) $product->purchase_price : 0.0;
-                $lineProfit = ($sellPrice - $buyPrice) * $qty;
+                $lineProfit = ($sellPrice - $buyPrice) * $qty * $this->recognizedSaleRatio($sale);
 
                 if (! array_key_exists($statsKey, $salesStats)) {
                     $salesStats[$statsKey] = [
@@ -270,7 +270,7 @@ class DashboardController extends Controller
     private function calculatePeriodPerformance(Collection $sales, Collection $productsByExternalId): array
     {
         return [
-            'sales' => round($sales->sum(fn (array $sale): float => (float) ($sale['total'] ?? 0)), 2),
+            'sales' => round($sales->sum(fn (array $sale): float => $this->recognizedSaleAmount($sale)), 2),
             'profit' => round($this->calculateProfitFromSales($sales, $productsByExternalId), 2),
         ];
     }
@@ -300,11 +300,68 @@ class DashboardController extends Controller
                 $sellPrice = (float) ($line['price'] ?? 0);
                 $buyPrice = $product ? (float) $product->purchase_price : 0.0;
 
-                $totalProfit += ($sellPrice - $buyPrice) * $qty;
+                $totalProfit += ($sellPrice - $buyPrice) * $qty * $this->recognizedSaleRatio($sale);
             }
         }
 
         return $totalProfit;
+    }
+
+    private function isMetricSale(array $sale): bool
+    {
+        return in_array((string) ($sale['status'] ?? 'pending'), ['completed', 'credit', 'pending'], true);
+    }
+
+    private function recognizedSaleAmount(array $sale): float
+    {
+        $status = (string) ($sale['status'] ?? 'pending');
+
+        if (! $this->isMetricSale($sale)) {
+            return 0.0;
+        }
+
+        $hasOpenCredit = in_array($status, ['credit', 'pending'], true)
+            || (float) ($sale['creditBalance'] ?? 0) > 0;
+
+        if (! $hasOpenCredit) {
+            return (float) ($sale['total'] ?? 0);
+        }
+
+        return $this->collectedSaleAmount($sale);
+    }
+
+    private function recognizedSaleRatio(array $sale): float
+    {
+        $total = (float) ($sale['total'] ?? 0);
+
+        if ($total <= 0) {
+            return 0.0;
+        }
+
+        return min(1.0, max(0.0, $this->recognizedSaleAmount($sale) / $total));
+    }
+
+    private function collectedSaleAmount(array $sale): float
+    {
+        $breakdown = $sale['paymentBreakdown'] ?? null;
+
+        if (is_array($breakdown) && $breakdown !== []) {
+            return round(collect($breakdown)
+                ->filter(fn (mixed $part): bool => is_array($part) && in_array((string) ($part['method'] ?? ''), ['cash', 'card'], true))
+                ->sum(fn (array $part): float => (float) ($part['amount'] ?? 0)), 2);
+        }
+
+        $total = (float) ($sale['total'] ?? 0);
+        $creditBalance = $sale['creditBalance'] ?? null;
+
+        if ($creditBalance !== null) {
+            return round(min($total, max(0.0, $total - (float) $creditBalance)), 2);
+        }
+
+        $amountReceived = (float) ($sale['amountReceived'] ?? 0);
+        $change = (float) ($sale['change'] ?? 0);
+
+        return round(min($total, max(0.0, $amountReceived - $change)), 2);
     }
 
     /**

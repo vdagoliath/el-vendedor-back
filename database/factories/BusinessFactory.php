@@ -18,11 +18,11 @@ class BusinessFactory extends Factory
      */
     public function definition(): array
     {
-        $name = fake()->unique()->company();
+        $name = $this->faker->unique()->company();
 
         return [
             'name' => $name,
-            'slug' => Str::slug($name).'-'.fake()->unique()->numerify('###'),
+            'slug' => Str::slug($name).'-'.$this->faker->unique()->numerify('###'),
             'is_active' => true,
         ];
     }

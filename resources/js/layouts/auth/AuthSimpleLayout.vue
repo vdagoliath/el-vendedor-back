@@ -18,16 +18,21 @@ defineProps<{
                 <div class="flex flex-col items-center gap-4">
                     <Link
                         :href="home()"
-                        class="flex flex-col items-center gap-2 font-medium"
+                        class="flex items-center gap-3 font-medium"
                     >
                         <div
-                            class="mb-1 flex h-9 w-9 items-center justify-center rounded-md"
+                            class="flex h-11 w-11 items-center justify-center rounded-2xl bg-sidebar-primary text-sidebar-primary-foreground shadow-sm ring-1 ring-sidebar-border/70"
                         >
                             <AppLogoIcon
-                                class="size-9 fill-current text-[var(--foreground)] dark:text-white"
+                                class="size-6 fill-current text-white dark:text-black"
                             />
                         </div>
-                        <span class="sr-only">{{ title }}</span>
+                        <div class="text-left leading-tight">
+                            <p class="text-base font-semibold">El Vendedor</p>
+                            <p class="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                                Backoffice
+                            </p>
+                        </div>
                     </Link>
                     <div class="space-y-2 text-center">
                         <h1 class="text-xl font-medium">{{ title }}</h1>

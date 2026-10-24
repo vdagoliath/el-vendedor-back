@@ -9,6 +9,12 @@ use Illuminate\Validation\Rule;
 class PushSyncRequest extends FormRequest
 {
     /**
+     * Must stay in sync with `push_contract.max_batch_size` advertised by
+     * SyncBootstrapController::show().
+     */
+    public const MAX_BATCH_SIZE = 1000;
+
+    /**
      * Determine if the user is authorized to make this request.
      */
     public function authorize(): bool
@@ -29,13 +35,24 @@ class PushSyncRequest extends FormRequest
             'device.platform' => ['nullable', 'string', 'max:100'],
             'device.app_version' => ['nullable', 'string', 'max:100'],
             'cursor' => ['nullable', 'string', 'max:191'],
-            'changes' => ['required', 'array', 'min:1', 'max:1000'],
+            'changes' => ['required', 'array', 'min:1', 'max:'.self::MAX_BATCH_SIZE],
             'changes.*.event_id' => ['required', 'string', 'max:191'],
             'changes.*.entity_type' => ['required', 'string', 'max:100'],
             'changes.*.entity_id' => ['required', 'string', 'max:191'],
             'changes.*.operation' => ['required', 'string', Rule::in(['create', 'update', 'delete', 'upsert'])],
             'changes.*.occurred_at' => ['nullable', 'date'],
             'changes.*.payload' => ['nullable', 'array'],
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'changes.max' => 'El lote de cambios excede el máximo permitido ('.self::MAX_BATCH_SIZE.' eventos por push).',
+            'changes.required' => 'Debes enviar al menos un cambio para sincronizar.',
         ];
     }
 

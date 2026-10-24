@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
-import { ArrowRightLeft, CalendarDays, Search, ShoppingCart, UserRound } from 'lucide-vue-next';
+import { ArrowRightLeft, CalendarDays, Download, Search, ShoppingCart, UserRound } from 'lucide-vue-next';
+import { computed } from 'vue';
 import SaleController from '@/actions/App/Http/Controllers/Backoffice/SaleController';
 import Heading from '@/components/Heading.vue';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { index as backofficeBusinesses } from '@/routes/backoffice/businesses';
-import { index as backofficeSales } from '@/routes/backoffice/sales';
+import { exportMethod as backofficeSalesExport, index as backofficeSales } from '@/routes/backoffice/sales';
 import type { BreadcrumbItem } from '@/types';
 import type { Flash } from '@/types/auth';
 
@@ -80,6 +81,26 @@ const statusClasses: Record<string, string> = {
     canceled: 'border-rose-300 text-rose-700',
     pending: 'border-slate-300 text-slate-700',
 };
+
+const exportUrl = computed(() => {
+    const query: Record<string, string> = {};
+    if (props.filters.search) {
+        query.search = props.filters.search;
+    }
+    if (props.filters.status) {
+        query.status = props.filters.status;
+    }
+    if (props.filters.start_date) {
+        query.start_date = props.filters.start_date;
+    }
+    if (props.filters.end_date) {
+        query.end_date = props.filters.end_date;
+    }
+
+    return backofficeSalesExport({ query }).url;
+});
+
+const canExport = computed(() => props.sales.length > 0);
 </script>
 
 <template>
@@ -135,6 +156,13 @@ const statusClasses: Record<string, string> = {
                 class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
             >
                 {{ page.props.flash.error }}
+            </div>
+
+            <div class="flex justify-end">
+                <Button as="a" :href="exportUrl" :disabled="!canExport" :aria-disabled="!canExport" variant="outline">
+                    <Download class="size-4" />
+                    Exportar a Excel
+                </Button>
             </div>
 
             <Card class="rounded-3xl">

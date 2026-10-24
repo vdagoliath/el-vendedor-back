@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
-import { ShieldCheck, UserPlus, Users } from 'lucide-vue-next';
+import { KeyRound, PencilLine, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-vue-next';
+import { ref } from 'vue';
 import CurrentBusinessEmployeeController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessEmployeeController';
 import CurrentBusinessMemberController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessMemberController';
 import Heading from '@/components/Heading.vue';
@@ -49,6 +50,13 @@ type Props = {
 defineProps<Props>();
 
 const page = usePage<{ flash: Flash }>();
+
+type MemberPanel = 'edit' | 'password' | null;
+const memberPanel = ref<Record<number, MemberPanel>>({});
+
+const togglePanel = (memberId: number, panel: Exclude<MemberPanel, null>) => {
+    memberPanel.value[memberId] = memberPanel.value[memberId] === panel ? null : panel;
+};
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -116,7 +124,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                             :key="member.id"
                             class="rounded-2xl border border-border/70 bg-muted/20 p-4"
                         >
-                            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                 <div class="space-y-1">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <h3 class="font-semibold">{{ member.name }}</h3>
@@ -131,19 +139,134 @@ const breadcrumbs: BreadcrumbItem[] = [
                                             <ShieldCheck class="mr-1 size-3.5" />
                                             {{ member.backoffice_role_label }}
                                         </Badge>
+                                        <Badge
+                                            :variant="member.membership_is_active ? 'secondary' : 'outline'"
+                                            class="rounded-full"
+                                        >
+                                            {{ member.membership_is_active ? 'Activo' : 'Inactivo' }}
+                                        </Badge>
                                     </div>
                                     <p class="text-sm text-muted-foreground">
                                         {{ member.email }}
                                     </p>
                                 </div>
 
-                                <Badge
-                                    :variant="member.membership_is_active ? 'secondary' : 'outline'"
-                                    class="rounded-full"
-                                >
-                                    {{ member.membership_is_active ? 'Activo' : 'Inactivo' }}
-                                </Badge>
+                                <div class="flex flex-wrap gap-2 md:justify-end">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        @click="togglePanel(member.id, 'edit')"
+                                    >
+                                        <PencilLine class="size-4" />
+                                        {{ memberPanel[member.id] === 'edit' ? 'Cerrar' : 'Editar' }}
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        @click="togglePanel(member.id, 'password')"
+                                    >
+                                        <KeyRound class="size-4" />
+                                        Contraseña
+                                    </Button>
+                                    <Form
+                                        v-bind="CurrentBusinessMemberController.destroy.form(member.id)"
+                                        class="inline-flex"
+                                        v-slot="{ processing: deleting }"
+                                    >
+                                        <Button :disabled="deleting" variant="outline" class="text-red-700">
+                                            <Trash2 class="size-4" />
+                                            Desvincular
+                                        </Button>
+                                    </Form>
+                                </div>
                             </div>
+
+                            <Form
+                                v-if="memberPanel[member.id] === 'edit'"
+                                v-bind="CurrentBusinessMemberController.update.form(member.id)"
+                                class="mt-4 grid gap-4 rounded-2xl border border-dashed border-border bg-background/60 p-4"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label :for="`member-name-${member.id}`">Nombre</Label>
+                                        <Input
+                                            :id="`member-name-${member.id}`"
+                                            name="name"
+                                            required
+                                            :default-value="member.name"
+                                        />
+                                        <InputError :message="errors.name" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`member-email-${member.id}`">Correo</Label>
+                                        <Input
+                                            :id="`member-email-${member.id}`"
+                                            name="email"
+                                            type="email"
+                                            required
+                                            :default-value="member.email"
+                                        />
+                                        <InputError :message="errors.email" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`member-role-${member.id}`">Rol</Label>
+                                        <select
+                                            :id="`member-role-${member.id}`"
+                                            name="role"
+                                            class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none"
+                                        >
+                                            <option value="employee" :selected="member.role === 'employee'">Empleado</option>
+                                            <option value="owner" :selected="member.role === 'owner'">Dueño</option>
+                                        </select>
+                                        <InputError :message="errors.role" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label class="flex items-center gap-2 text-sm">
+                                            <input type="hidden" name="is_active" value="0" />
+                                            <input type="checkbox" name="is_active" value="1" :checked="member.membership_is_active" />
+                                            Membresía activa
+                                        </Label>
+                                    </div>
+                                </div>
+
+                                <div class="flex justify-end">
+                                    <Button :disabled="processing">Guardar</Button>
+                                </div>
+                            </Form>
+
+                            <Form
+                                v-if="memberPanel[member.id] === 'password'"
+                                v-bind="CurrentBusinessMemberController.updatePassword.form(member.id)"
+                                class="mt-4 grid gap-4 rounded-2xl border border-dashed border-border bg-background/60 p-4"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label :for="`member-pass-${member.id}`">Nueva contraseña</Label>
+                                        <Input
+                                            :id="`member-pass-${member.id}`"
+                                            type="password"
+                                            name="password"
+                                            required
+                                        />
+                                        <InputError :message="errors.password" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`member-pass-confirm-${member.id}`">Confirmar contraseña</Label>
+                                        <Input
+                                            :id="`member-pass-confirm-${member.id}`"
+                                            type="password"
+                                            name="password_confirmation"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+
+                                <div class="flex justify-end">
+                                    <Button :disabled="processing">Cambiar contraseña</Button>
+                                </div>
+                            </Form>
                         </article>
                     </CardContent>
                 </Card>

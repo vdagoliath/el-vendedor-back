@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'qvapay' => [
+        'p2p_averages_url' => env('QVAPAY_P2P_AVERAGES_URL', 'https://api.qvapay.com/p2p/averages'),
+    ],
+
+    'er_api' => [
+        'latest_url' => env('EXCHANGE_RATE_API_URL', 'https://open.er-api.com/v6/latest/USD'),
+    ],
 ];

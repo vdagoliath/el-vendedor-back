@@ -1,10 +1,22 @@
 <?php
 
+use App\Http\Controllers\Api\Marketplace\V1\CatalogProductController as MarketplaceCatalogProductController;
+use App\Http\Controllers\Api\Marketplace\V1\ConsumerAuthController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceCategoryController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceCurrencyController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceOrderController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceQuoteController;
+use App\Http\Controllers\Api\Marketplace\V1\MarketplaceRateController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthenticatedUserController;
 use App\Http\Controllers\Api\V1\Auth\CurrentBusinessController;
 use App\Http\Controllers\Api\V1\Auth\RegisteredUserController;
+use App\Http\Controllers\Api\V1\Auth\SellerInvitationController;
+use App\Http\Controllers\Api\V1\CashRegister\CashRegisterSessionController;
+use App\Http\Controllers\Api\V1\Marketplace\SellerOrderController as ApiV1MarketplaceSellerOrderController;
+use App\Http\Controllers\Api\V1\Sync\ReprocessFailedEventsController;
 use App\Http\Controllers\Api\V1\Sync\SyncBootstrapController;
+use App\Http\Controllers\Api\V1\Sync\SyncConflictController;
 use App\Http\Controllers\Api\V1\Sync\SyncPullController;
 use App\Http\Controllers\Api\V1\Sync\SyncPushController;
 use Illuminate\Support\Facades\Route;
@@ -27,19 +39,136 @@ Route::prefix('v1')
                     ->middleware('throttle:login')
                     ->name('sync-token');
 
+                Route::post('seller-token', [SellerInvitationController::class, 'claim'])
+                    ->middleware('throttle:login')
+                    ->name('seller-token');
+
                 Route::middleware('auth:sanctum')->group(function (): void {
                     Route::get('me', [AuthenticatedUserController::class, 'show'])->name('me');
                     Route::put('current-business', [CurrentBusinessController::class, 'update'])->name('current-business.update');
                     Route::post('logout', [AuthenticatedTokenController::class, 'destroy'])->name('logout');
+
+                    Route::middleware('ability:sync:owner')->group(function (): void {
+                        Route::post('seller-invitations', [SellerInvitationController::class, 'store'])
+                            ->name('seller-invitations.store');
+                        Route::get('seller-invitations', [SellerInvitationController::class, 'index'])
+                            ->name('seller-invitations.index');
+                    });
                 });
             });
 
-        Route::middleware(['auth:sanctum', 'current.business'])
+        Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business', 'sync.request'])
             ->prefix('sync')
             ->name('sync.')
             ->group(function (): void {
                 Route::get('bootstrap', [SyncBootstrapController::class, 'show'])->name('bootstrap');
                 Route::get('pull', [SyncPullController::class, 'index'])->name('pull');
                 Route::post('push', [SyncPushController::class, 'store'])->name('push');
+                Route::post('conflicts/{conflict}/resolve', [SyncConflictController::class, 'resolve'])
+                    ->whereNumber('conflict')
+                    ->name('conflicts.resolve');
             });
+
+        // Endpoint administrativo: reprocesa eventos estancados en status `failed`.
+        // Restringido al owner porque implica re-materializar datos en tablas
+        // compartidas del negocio (products, sales, etc.).
+        Route::middleware(['auth:sanctum', 'ability:sync:owner', 'current.business'])
+            ->prefix('sync')
+            ->name('sync.')
+            ->group(function (): void {
+                Route::get('failed-events', [ReprocessFailedEventsController::class, 'summary'])
+                    ->name('failed-events.summary');
+                Route::post('reprocess-failed-events', [ReprocessFailedEventsController::class, 'store'])
+                    ->name('failed-events.reprocess');
+            });
+
+        Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])
+            ->prefix('marketplace')
+            ->name('marketplace.')
+            ->group(function (): void {
+                Route::get('seller-orders', [ApiV1MarketplaceSellerOrderController::class, 'index'])
+                    ->name('seller-orders.index');
+                Route::post('seller-orders/{sellerOrder}/accept', [ApiV1MarketplaceSellerOrderController::class, 'accept'])
+                    ->whereNumber('sellerOrder')
+                    ->name('seller-orders.accept');
+                Route::post('seller-orders/{sellerOrder}/reject', [ApiV1MarketplaceSellerOrderController::class, 'reject'])
+                    ->whereNumber('sellerOrder')
+                    ->name('seller-orders.reject');
+                Route::patch('seller-orders/{sellerOrder}/status', [ApiV1MarketplaceSellerOrderController::class, 'updateStatus'])
+                    ->whereNumber('sellerOrder')
+                    ->name('seller-orders.status.update');
+            });
+
+        Route::middleware(['auth:sanctum', 'ability:sync:owner,sync:seller', 'current.business'])
+            ->prefix('cash-register')
+            ->name('cash-register.')
+            ->group(function (): void {
+                Route::get('pos/{posExternalId}/active-session', [CashRegisterSessionController::class, 'active'])
+                    ->name('pos.active-session');
+                Route::post('pos/{posExternalId}/open-session', [CashRegisterSessionController::class, 'open'])
+                    ->name('pos.open-session');
+                Route::post('sessions/{externalId}/close', [CashRegisterSessionController::class, 'close'])
+                    ->name('sessions.close');
+                Route::get('sessions/{externalId}/summary', [CashRegisterSessionController::class, 'summary'])
+                    ->name('sessions.summary');
+                Route::post('sessions/{externalId}/master/claim', [CashRegisterSessionController::class, 'claimMaster'])
+                    ->name('sessions.master.claim');
+                Route::post('sessions/{externalId}/master/refresh', [CashRegisterSessionController::class, 'refreshMaster'])
+                    ->name('sessions.master.refresh');
+                Route::post('sessions/{externalId}/master/release', [CashRegisterSessionController::class, 'releaseMaster'])
+                    ->name('sessions.master.release');
+            });
+    });
+
+Route::prefix('marketplace/v1')
+    ->name('api.marketplace.v1.')
+    ->group(function (): void {
+        Route::prefix('catalog')
+            ->name('catalog.')
+            ->group(function (): void {
+                Route::get('products', [MarketplaceCatalogProductController::class, 'index'])
+                    ->name('products.index');
+                Route::get('products/{publication}', [MarketplaceCatalogProductController::class, 'show'])
+                    ->whereNumber('publication')
+                    ->name('products.show');
+            });
+
+        Route::post('quotes', [MarketplaceQuoteController::class, 'store'])
+            ->name('quotes.store');
+        Route::post('quotes/{quote}/reserve', [MarketplaceQuoteController::class, 'reserve'])
+            ->whereNumber('quote')
+            ->name('quotes.reserve');
+        Route::post('quotes/{quote}/confirm', [MarketplaceQuoteController::class, 'confirm'])
+            ->whereNumber('quote')
+            ->name('quotes.confirm');
+        Route::get('orders', [MarketplaceOrderController::class, 'index'])
+            ->name('orders.index');
+        Route::get('orders/{orderNumber}', [MarketplaceOrderController::class, 'show'])
+            ->name('orders.show');
+
+        // Auth de consumidor (reutiliza `users` v1; tokens con ability `consumer`).
+        Route::prefix('auth')
+            ->name('auth.')
+            ->group(function (): void {
+                Route::post('register', [ConsumerAuthController::class, 'register'])
+                    ->middleware('throttle:6,1')
+                    ->name('register');
+                Route::post('login', [ConsumerAuthController::class, 'login'])
+                    ->middleware('throttle:login')
+                    ->name('login');
+
+                Route::middleware(['auth:sanctum', 'ability:consumer'])
+                    ->group(function (): void {
+                        Route::get('me', [ConsumerAuthController::class, 'me'])->name('me');
+                        Route::post('logout', [ConsumerAuthController::class, 'logout'])->name('logout');
+                    });
+            });
+
+        // Monedas y tasas de visualizacion gestionadas por el backend.
+        Route::get('categories', [MarketplaceCategoryController::class, 'index'])
+            ->name('categories.index');
+        Route::get('currencies', [MarketplaceCurrencyController::class, 'index'])
+            ->name('currencies.index');
+        Route::get('rates', [MarketplaceRateController::class, 'show'])
+            ->name('rates.show');
     });

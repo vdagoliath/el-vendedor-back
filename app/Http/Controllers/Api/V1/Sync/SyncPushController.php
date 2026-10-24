@@ -6,19 +6,55 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Sync\PushSyncRequest;
 use App\Models\Business;
 use App\Models\Device;
+use App\Models\PersonalAccessToken;
+use App\Models\PointOfSale;
 use App\Models\Product;
 use App\Models\SyncCheckpoint;
 use App\Models\SyncConflict;
 use App\Models\SyncReceivedEvent;
+use App\Support\Inventory\InventoryProjector;
+use App\Support\Sync\BusinessPolicies;
 use App\Support\Sync\ContactPayloadNormalizer;
+use App\Support\Sync\SyncCompatibility;
+use App\Support\Sync\SyncEntityApplier;
+use App\Support\Sync\SyncTransactionApplier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 class SyncPushController extends Controller
 {
+    /**
+     * Entity types that sellers are NOT allowed to push.
+     * Anything not in this list is permitted for sellers too.
+     */
+    private const SELLER_FORBIDDEN_ENTITY_TYPES = [
+        'purchases',
+        'products',
+        'marketplace_product_publications',
+        'product_batches',
+        'business_profile',
+        'categories',
+        'units',
+        'warehouses',
+        'points_of_sale',
+        'employees',
+        'expenses',
+        'license_catalog',
+        'license_quote',
+        'cash_register_sessions',
+        'product_breakdowns',
+        'metrics_snapshots',
+    ];
+
     public function __construct(
-        private readonly ContactPayloadNormalizer $contactPayloadNormalizer
+        private readonly ContactPayloadNormalizer $contactPayloadNormalizer,
+        private readonly SyncCompatibility $syncCompatibility,
+        private readonly SyncEntityApplier $entityApplier,
+        private readonly SyncTransactionApplier $transactionApplier,
+        private readonly InventoryProjector $inventoryProjector,
     ) {}
 
     /**
@@ -30,6 +66,21 @@ class SyncPushController extends Controller
 
         abort_unless($business instanceof Business, 409, 'No existe un negocio actual activo para sincronizar.');
 
+        $dataResetFailure = $this->evaluateBusinessDataResetVersion($request, $business);
+        if ($dataResetFailure !== null) {
+            return response()->json($dataResetFailure, 409);
+        }
+
+        /** @var PersonalAccessToken|null $accessToken */
+        $accessToken = $request->user()?->currentAccessToken();
+        $ability = $this->resolveTokenAbility($accessToken);
+        $employeeExternalId = $accessToken?->employee_external_id;
+
+        // Defense-in-depth: token must be scoped to the same business.
+        if ($accessToken && $accessToken->business_id !== null && $accessToken->business_id !== $business->id) {
+            abort(403, 'El token no está autorizado para este negocio.');
+        }
+
         $device = $this->upsertDevice($request, $business);
 
         $accepted = [];
@@ -38,6 +89,34 @@ class SyncPushController extends Controller
 
         foreach ($request->validated('changes') as $change) {
             $change = $this->normalizeChange($change);
+
+            if (! $this->isEntityTypeAllowedForAbility($change['entity_type'], $ability)) {
+                $rejected[] = [
+                    'event_id' => $change['event_id'],
+                    'entity_type' => $change['entity_type'],
+                    'entity_id' => $change['entity_id'],
+                    'status' => 'rejected',
+                    'reason' => 'El tipo de entidad no está permitido para este dispositivo.',
+                    'code' => 'sync_entity_forbidden',
+                    'retryable' => false,
+                ];
+
+                continue;
+            }
+
+            if (! $this->isChangeAllowedForSellerScope($business, $change, $ability, $employeeExternalId)) {
+                $rejected[] = [
+                    'event_id' => $change['event_id'],
+                    'entity_type' => $change['entity_type'],
+                    'entity_id' => $change['entity_id'],
+                    'status' => 'rejected',
+                    'reason' => 'El movimiento no pertenece al almacén asignado a este vendedor.',
+                    'code' => 'sync_seller_scope_forbidden',
+                    'retryable' => false,
+                ];
+
+                continue;
+            }
 
             $existingEvent = SyncReceivedEvent::query()
                 ->where('business_id', $business->id)
@@ -59,6 +138,8 @@ class SyncPushController extends Controller
                 'business_id' => $business->id,
                 'user_id' => $request->user()?->id,
                 'device_id' => $device->id,
+                'employee_external_id' => $employeeExternalId,
+                'token_ability' => $ability,
                 'event_id' => $change['event_id'],
                 'entity_type' => $change['entity_type'],
                 'entity_id' => $change['entity_id'],
@@ -69,7 +150,7 @@ class SyncPushController extends Controller
             ]);
 
             try {
-                $status = $this->applyChange($business, $request->user(), $event, $change);
+                $status = $this->applyChange($business, $request->user(), $event, $change, $ability);
 
                 $event->forceFill([
                     'status' => $status,
@@ -90,7 +171,7 @@ class SyncPushController extends Controller
                     'error_message' => $exception->getMessage(),
                 ])->save();
 
-                $this->recordConflict($business, $request, $device, $change, $exception);
+                $conflictType = $this->recordConflict($business, $request, $device, $change, $exception);
 
                 $rejected[] = [
                     'event_id' => $change['event_id'],
@@ -98,6 +179,9 @@ class SyncPushController extends Controller
                     'entity_id' => $change['entity_id'],
                     'status' => 'failed',
                     'reason' => $exception->getMessage(),
+                    'code' => $this->resolveChangeErrorCode($exception, $conflictType),
+                    'retryable' => $this->isRetryableChangeError($exception, $conflictType),
+                    'conflict_type' => $conflictType,
                 ];
             }
         }
@@ -133,6 +217,150 @@ class SyncPushController extends Controller
     }
 
     /**
+     * @return array<string, mixed>|null
+     */
+    private function evaluateBusinessDataResetVersion(PushSyncRequest $request, Business $business): ?array
+    {
+        $serverVersion = (int) $business->data_reset_version;
+        $rawClientVersion = $request->header('X-Business-Data-Reset-Version');
+
+        if ($rawClientVersion === null) {
+            return null;
+        }
+
+        if ($serverVersion === 0 && $rawClientVersion === '0') {
+            return null;
+        }
+
+        if (! is_numeric($rawClientVersion) || (int) $rawClientVersion !== $serverVersion) {
+            return [
+                'message' => 'El negocio fue limpiado en el servidor. Debes reiniciar los datos locales antes de volver a sincronizar.',
+                'error' => [
+                    'code' => 'business_data_reset_required',
+                    'retryable' => false,
+                ],
+                'current_business' => [
+                    'id' => $business->id,
+                    'data_reset_version' => $serverVersion,
+                    'data_reset_at' => $business->data_reset_at?->toIso8601String(),
+                ],
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Returns 'sync:owner', 'sync:seller' or null if token has no known sync ability.
+     */
+    private function resolveTokenAbility(?PersonalAccessToken $token): ?string
+    {
+        if (! $token) {
+            return null;
+        }
+
+        foreach (['sync:owner', 'sync:seller'] as $candidate) {
+            if ($token->can($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function isEntityTypeAllowedForAbility(string $entityType, ?string $ability): bool
+    {
+        // Owner and legacy unscoped tokens can push any entity type.
+        if ($ability === null || $ability === 'sync:owner') {
+            return true;
+        }
+
+        if ($ability === 'sync:seller') {
+            return ! in_array($entityType, self::SELLER_FORBIDDEN_ENTITY_TYPES, true);
+        }
+
+        return false;
+    }
+
+
+    private function isChangeAllowedForSellerScope(Business $business, array $change, ?string $ability, ?string $employeeExternalId): bool
+    {
+        if ($ability !== 'sync:seller') {
+            return true;
+        }
+
+        $warehouseIds = $this->warehouseIdsFromSellerChange($change);
+        if ($warehouseIds === []) {
+            return true;
+        }
+
+        if (! is_string($employeeExternalId) || trim($employeeExternalId) === '') {
+            return false;
+        }
+
+        $assignedWarehouses = $this->warehouseIdsForSeller($business, $employeeExternalId);
+        if ($assignedWarehouses === []) {
+            return false;
+        }
+
+        foreach ($warehouseIds as $warehouseId) {
+            if (! in_array($warehouseId, $assignedWarehouses, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function warehouseIdsFromSellerChange(array $change): array
+    {
+        $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+        $warehouseIds = match ($change['entity_type']) {
+            'sales', 'stock_adjustments', 'product_losses', 'weight_journals' => [
+                $payload['warehouseId'] ?? null,
+            ],
+            'stock_movements' => [
+                $payload['fromWarehouseId'] ?? null,
+                $payload['toWarehouseId'] ?? null,
+            ],
+            default => [],
+        };
+
+        return array_values(array_unique(array_filter(array_map(
+            static fn (mixed $value): ?string => is_string($value) && trim($value) !== '' ? trim($value) : null,
+            $warehouseIds
+        ))));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function warehouseIdsForSeller(Business $business, string $employeeExternalId): array
+    {
+        $pointsOfSale = PointOfSale::query()
+            ->where('business_id', $business->id)
+            ->whereNotNull('warehouse_external_id')
+            ->get(['warehouse_external_id', 'employees']);
+
+        $warehouseIds = [];
+        foreach ($pointsOfSale as $pointOfSale) {
+            $employees = is_array($pointOfSale->employees) ? $pointOfSale->employees : [];
+            foreach ($employees as $employee) {
+                $id = is_array($employee) ? ($employee['_id'] ?? $employee['id'] ?? null) : null;
+                if ($id === $employeeExternalId) {
+                    $warehouseIds[] = (string) $pointOfSale->warehouse_external_id;
+                    break;
+                }
+            }
+        }
+
+        return array_values(array_unique($warehouseIds));
+    }
+
+    /**
      * Register or refresh the pushing device.
      */
     private function upsertDevice(PushSyncRequest $request, Business $business): Device
@@ -140,26 +368,29 @@ class SyncPushController extends Controller
         /** @var array{id:string,name:?string,platform:?string,app_version:?string} $devicePayload */
         $devicePayload = $request->validated('device');
 
-        return Device::query()->updateOrCreate(
-            ['id' => $devicePayload['id']],
-            [
-                'business_id' => $business->id,
-                'user_id' => $request->user()?->id,
-                'name' => $devicePayload['name'],
-                'platform' => $devicePayload['platform'],
-                'app_version' => $devicePayload['app_version'],
-                'is_active' => true,
-                'last_seen_at' => now(),
-                'last_synced_at' => now(),
-            ]
-        );
+        $device = Device::query()->firstOrNew(['id' => $devicePayload['id']]);
+        $existingMeta = is_array($device->meta) ? $device->meta : [];
+
+        $device->fill([
+            'business_id' => $business->id,
+            'user_id' => $request->user()?->id,
+            'name' => $devicePayload['name'],
+            'platform' => $devicePayload['platform'],
+            'app_version' => $this->syncCompatibility->clientAppVersion($request) ?? $devicePayload['app_version'],
+            'is_active' => true,
+            'last_seen_at' => now(),
+            'last_synced_at' => now(),
+            'meta' => array_filter(array_merge($existingMeta, [
+                'sync_version' => $this->syncCompatibility->clientSyncVersion($request),
+                'last_sync_stage' => 'push',
+            ]), static fn (mixed $value): bool => $value !== null),
+        ]);
+
+        $device->save();
+
+        return $device;
     }
 
-    /**
-     * Apply a supported domain change.
-     *
-     * @param  array<string, mixed>  $change
-     */
     /**
      * Normalize change aliases and payloads before they are persisted.
      *
@@ -188,16 +419,64 @@ class SyncPushController extends Controller
             }
         }
 
+        if (is_array($change['payload'] ?? null)) {
+            $change['payload'] = $this->sanitizeMediaPayload($change['entity_type'], $change['payload']);
+        }
+
         return $change;
     }
 
     /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function sanitizeMediaPayload(string $entityType, array $payload): array
+    {
+        $mediaKeys = match ($entityType) {
+            'products' => [
+                'photos',
+                'featuredPhoto',
+                'photo',
+                'image',
+                'images',
+                'base64String',
+                'dataUrl',
+                'webPath',
+                'filepath',
+                'path',
+            ],
+            'business_profile' => [
+                'businessPhoto',
+                'business_photo',
+                'businessPhotoRemoved',
+                'photo',
+                'image',
+                'logo',
+                'base64String',
+                'dataUrl',
+                'webPath',
+                'filepath',
+                'path',
+            ],
+            default => [],
+        };
+
+        foreach ($mediaKeys as $key) {
+            unset($payload[$key]);
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Apply a supported domain change.
+     *
      * @param  array<string, mixed>  $change
      */
-    private function applyChange(Business $business, mixed $user, SyncReceivedEvent $event, array $change): string
+    private function applyChange(Business $business, mixed $user, SyncReceivedEvent $event, array $change, ?string $ability = null): string
     {
         if ($change['entity_type'] === 'contacts') {
-            $this->assertContactPermission($business, $user, $change);
+            $this->assertContactPermission($business, $user, $change, $ability);
 
             return 'applied';
         }
@@ -214,7 +493,13 @@ class SyncPushController extends Controller
             return 'applied';
         }
 
-        if (in_array($change['entity_type'], ['categories', 'employees', 'units', 'warehouses', 'points_of_sale', 'sales', 'purchases', 'expenses'], true)) {
+        // Materializar entidades simples en tablas dedicadas
+        if ($this->entityApplier->apply($business, $event, $change)) {
+            return 'applied';
+        }
+
+        // Materializar transacciones (sales, purchases, expenses)
+        if ($this->transactionApplier->apply($business, $event, $change)) {
             return 'applied';
         }
 
@@ -226,7 +511,7 @@ class SyncPushController extends Controller
      *
      * @param  array<string, mixed>  $change
      */
-    private function assertContactPermission(Business $business, mixed $user, array $change): void
+    private function assertContactPermission(Business $business, mixed $user, array $change, ?string $ability = null): void
     {
         $contactType = null;
 
@@ -236,7 +521,13 @@ class SyncPushController extends Controller
 
         $normalizedType = is_string($contactType) ? strtolower(trim($contactType)) : null;
 
-        if (! $user?->canManageContactTypeInBusiness($business, $normalizedType)) {
+        // Sellers may only sync customer contacts; the token ability enforces this
+        // regardless of the owning user's permissions.
+        if ($ability === 'sync:seller' && $normalizedType !== 'customer') {
+            throw new \RuntimeException('Tu rol actual no puede gestionar proveedores.');
+        }
+
+        if ($ability === null && ! $user?->canManageContactTypeInBusiness($business, $normalizedType)) {
             throw new \RuntimeException('Tu rol actual no puede gestionar proveedores.');
         }
     }
@@ -296,6 +587,18 @@ class SyncPushController extends Controller
             ]);
         }
 
+        // El stock se sincroniza por eventos discretos (sales, purchases,
+        // stock_movements, stock_adjustments, product_breakdowns). Solo aceptamos el snapshot
+        // `stockByWarehouse` cuando el cliente lo marca explícitamente como
+        // seed inicial (`_stockSeed: true`). Para todos los demás updates
+        // del producto preservamos el stock existente; así un rename o
+        // cambio de precio no clobbea el stock de otros dispositivos.
+        $stockByWarehouse = $product->stock_by_warehouse ?? [];
+        $isStockSeed = ($payload['_stockSeed'] ?? false) === true;
+        if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
+            $stockByWarehouse = $payload['stockByWarehouse'];
+        }
+
         $product->fill([
             'business_id' => $business->id,
             'external_id' => $change['entity_id'],
@@ -305,12 +608,20 @@ class SyncPushController extends Controller
             'type' => trim((string) ($payload['type'] ?? 'product')) ?: 'product',
             'regular_price' => $this->normalizeDecimal($payload['regular_price'] ?? 0),
             'purchase_price' => $this->normalizeDecimal($payload['purchase_price'] ?? 0),
+            'prices_by_currency' => is_array($payload['pricesByCurrency'] ?? null) ? $payload['pricesByCurrency'] : null,
             'barcode_type' => $this->normalizeNullableString($payload['barcodeType'] ?? null),
             'min_stock' => $this->normalizeNullableDecimal($payload['min_stock'] ?? null),
             'category_external_id' => $this->normalizeNullableString($payload['categoryId'] ?? null),
             'unit_of_measurement' => is_array($payload['unitOfMeasurement'] ?? null) ? $payload['unitOfMeasurement'] : null,
             'unit_of_measurement_purchase' => is_array($payload['unitOfMeasurementPurchase'] ?? null) ? $payload['unitOfMeasurementPurchase'] : null,
-            'stock_by_warehouse' => is_array($payload['stockByWarehouse'] ?? null) ? $payload['stockByWarehouse'] : [],
+            'stock_by_warehouse' => $stockByWarehouse,
+            'has_recipe' => (bool) ($payload['hasRecipe'] ?? false),
+            'recipe_items' => is_array($payload['recipeItems'] ?? null) ? $payload['recipeItems'] : [],
+            'can_breakdown' => (bool) ($payload['canBreakdown'] ?? false),
+            'breakdown_target_product_external_id' => $this->normalizeNullableString($payload['breakdownTargetProductId'] ?? null),
+            'breakdown_target_quantity' => $this->normalizeNullableDecimal($payload['breakdownTargetQuantity'] ?? null),
+            'breakdown_target_title_snapshot' => $this->normalizeNullableString($payload['breakdownTargetTitleSnapshot'] ?? null),
+            'breakdown_target_unit_symbol_snapshot' => $this->normalizeNullableString($payload['breakdownTargetUnitSymbolSnapshot'] ?? null),
             'source_created_at' => $product->source_created_at ?? $occurredAt ?? now(),
             'source_updated_at' => $occurredAt ?? now(),
             'last_received_event_id' => $event->event_id,
@@ -323,6 +634,19 @@ class SyncPushController extends Controller
         if ($wasTrashed) {
             $product->restore();
         }
+
+        // Si el push trajo seed, replicamos el snapshot a la proyección.
+        // Reemplazamos los almacenes que aparecen en el payload; los que
+        // no aparecen se dejan tal cual (un seed parcial no borra otros
+        // almacenes).
+        if ($isStockSeed && is_array($payload['stockByWarehouse'] ?? null)) {
+            $this->inventoryProjector->setSeedMany(
+                $business,
+                $product->external_id,
+                $payload['stockByWarehouse'],
+                $event->event_id
+            );
+        }
     }
 
     /**
@@ -334,16 +658,94 @@ class SyncPushController extends Controller
     {
         $payload = is_array($change['payload'] ?? null) ? $change['payload'] : [];
 
+        // For nullable text fields we treat empty/missing values as
+        // "preserve existing" rather than "clear". This prevents a fresh
+        // device (e.g. a newly added co-owner) from clobbering the
+        // address/phone of the business with empty strings on its first
+        // bootstrap push.
+        $addressPayload = is_array($payload['address'] ?? null) ? $payload['address'] : null;
+        $legacyAddressString = is_string($payload['address'] ?? null) ? $payload['address'] : null;
+        $businessPhotoRemoved = ($payload['businessPhotoRemoved'] ?? false) === true;
+        $businessPhoto = ! $businessPhotoRemoved && array_key_exists('businessPhoto', $payload)
+            ? $this->storeBusinessPhoto($business, $payload['businessPhoto'])
+            : null;
+
         $business->fill([
             'name' => $this->normalizeNullableString($payload['businessName'] ?? null) ?: $business->name,
-            'address' => $this->normalizeNullableString($payload['address'] ?? null),
-            'phone' => $this->normalizeNullableString($payload['phone'] ?? null),
+            'photo' => $businessPhotoRemoved
+                ? null
+                : ($businessPhoto ?? $business->photo),
+            'address' => $this->normalizeNullableString($legacyAddressString) ?? $business->address,
+            'country' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['country'] ?? null) ?? $business->country)
+                : $business->country,
+            'province' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['province'] ?? null) ?? $business->province)
+                : $business->province,
+            'municipality' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['municipality'] ?? null) ?? $business->municipality)
+                : $business->municipality,
+            'street' => $addressPayload !== null
+                ? ($this->normalizeNullableString($addressPayload['street'] ?? null) ?? $business->street)
+                : $business->street,
+            'phone' => $this->normalizeNullableString($payload['phone'] ?? null) ?? $business->phone,
             'default_currency' => $this->normalizeNullableString($payload['defaultCurrency'] ?? null) ?: ($business->default_currency ?? 'CUP'),
-            'license_expires_at' => $this->normalizeNullableString($payload['licenseExpiresAt'] ?? null),
+            'license_expires_at' => $this->normalizeNullableString($payload['licenseExpiresAt'] ?? null) ?? $business->license_expires_at,
         ]);
+
+        if (is_array($payload['policies'] ?? null)) {
+            $business->policies = array_merge(
+                BusinessPolicies::normalize((array) ($business->policies ?? [])),
+                BusinessPolicies::normalize($payload['policies'])
+            );
+        }
 
         $business->touch();
         $business->save();
+    }
+
+    private function storeBusinessPhoto(Business $business, mixed $photo): ?string
+    {
+        $rawPhoto = $this->normalizeNullableString($photo);
+        if ($rawPhoto === null) {
+            return null;
+        }
+
+        if (preg_match('/^(https?:)?\/\//i', $rawPhoto) === 1 || str_starts_with($rawPhoto, '/storage/')) {
+            return $rawPhoto;
+        }
+
+        $contentType = 'image/jpeg';
+        $rawData = $rawPhoto;
+
+        if (preg_match('/^data:(image\/(?:jpeg|jpg|png|webp));base64,(.+)$/i', $rawPhoto, $matches) === 1) {
+            $contentType = strtolower($matches[1]);
+            $rawData = $matches[2];
+        } elseif (str_contains($rawPhoto, ',')) {
+            $rawData = substr($rawPhoto, strpos($rawPhoto, ',') + 1);
+        }
+
+        $binary = base64_decode($rawData, true);
+        if ($binary === false || strlen($binary) > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        $extension = match ($contentType) {
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            default => 'jpg',
+        };
+
+        $path = sprintf(
+            'marketplace/business-%s/profile/%s.%s',
+            $business->id,
+            Str::ulid(),
+            $extension,
+        );
+
+        Storage::disk('public')->put($path, $binary);
+
+        return Storage::disk('public')->url($path);
     }
 
     private function assertProductCodeIsAvailable(Business $business, string $externalId, string $code): void
@@ -371,9 +773,9 @@ class SyncPushController extends Controller
         Device $device,
         array $change,
         Throwable $exception
-    ): void {
+    ): ?string {
         if ($change['entity_type'] !== 'products') {
-            return;
+            return null;
         }
 
         $remotePayload = null;
@@ -391,6 +793,8 @@ class SyncPushController extends Controller
             }
         }
 
+        $conflictType = $remotePayload ? 'duplicate_code' : 'apply_error';
+
         SyncConflict::query()->create([
             'business_id' => $business->id,
             'user_id' => $request->user()?->id,
@@ -398,11 +802,13 @@ class SyncPushController extends Controller
             'event_id' => $change['event_id'],
             'entity_type' => $change['entity_type'],
             'entity_id' => $change['entity_id'],
-            'conflict_type' => $remotePayload ? 'duplicate_code' : 'apply_error',
+            'conflict_type' => $conflictType,
             'local_payload' => is_array($change['payload'] ?? null) ? $change['payload'] : null,
             'remote_payload' => $remotePayload,
             'status' => 'open',
         ]);
+
+        return $conflictType;
     }
 
     private function parseDate(mixed $value): ?Carbon
@@ -443,6 +849,40 @@ class SyncPushController extends Controller
         return $normalized === '' ? null : $normalized;
     }
 
+    private function resolveChangeErrorCode(Throwable $exception, ?string $conflictType): string
+    {
+        $message = strtolower(trim($exception->getMessage()));
+
+        if ($conflictType === 'duplicate_code') {
+            return 'sync_duplicate_product_code';
+        }
+
+        if (str_contains($message, 'no puede gestionar')) {
+            return 'sync_permission_denied';
+        }
+
+        if (str_contains($message, 'no tiene codigo') || str_contains($message, 'no tiene nombre')) {
+            return 'sync_invalid_payload';
+        }
+
+        return 'sync_apply_error';
+    }
+
+    private function isRetryableChangeError(Throwable $exception, ?string $conflictType): bool
+    {
+        if ($conflictType === 'duplicate_code') {
+            return false;
+        }
+
+        $message = strtolower(trim($exception->getMessage()));
+
+        if (str_contains($message, 'no puede gestionar') || str_contains($message, 'no tiene codigo') || str_contains($message, 'no tiene nombre')) {
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * Convert a backend product to sync payload format.
      *
@@ -457,12 +897,20 @@ class SyncPushController extends Controller
             'type' => $product->type,
             'regular_price' => (float) $product->regular_price,
             'purchase_price' => (float) $product->purchase_price,
+            'pricesByCurrency' => $product->prices_by_currency ?? null,
             'barcodeType' => $product->barcode_type,
             'min_stock' => $product->min_stock !== null ? (float) $product->min_stock : null,
             'categoryId' => $product->category_external_id,
             'unitOfMeasurement' => $product->unit_of_measurement,
             'unitOfMeasurementPurchase' => $product->unit_of_measurement_purchase,
             'stockByWarehouse' => $product->stock_by_warehouse ?? [],
+            'hasRecipe' => (bool) $product->has_recipe,
+            'recipeItems' => $product->recipe_items ?? [],
+            'canBreakdown' => (bool) $product->can_breakdown,
+            'breakdownTargetProductId' => $product->breakdown_target_product_external_id,
+            'breakdownTargetQuantity' => $product->breakdown_target_quantity !== null ? (float) $product->breakdown_target_quantity : null,
+            'breakdownTargetTitleSnapshot' => $product->breakdown_target_title_snapshot,
+            'breakdownTargetUnitSymbolSnapshot' => $product->breakdown_target_unit_symbol_snapshot,
             'deleted_at' => $product->deleted_at?->toIso8601String(),
         ];
     }

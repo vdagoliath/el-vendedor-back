@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php artisan *)",
+      "Bash(vendor/bin/pint --dirty --format agent)",
+      "Bash(php /mnt/wwn-0x5000c500e9568dfa-part2/Work/MiraloAki/ElVendedor/el-vendedor-back/artisan route:list --name=license-pricing)",
+      "mcp__laravel-boost__database-query"
+    ]
+  }
+}

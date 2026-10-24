@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Form, Head, Link, usePage } from '@inertiajs/vue3';
-import { Building2, CircleCheckBig, Plus, Store } from 'lucide-vue-next';
+import { AlertTriangle, CircleCheckBig, Copy, KeyRound, PencilLine, Plus, Power, PowerOff, Store, Trash2 } from 'lucide-vue-next';
+import { computed, reactive, ref } from 'vue';
 import BusinessController from '@/actions/App/Http/Controllers/Backoffice/BusinessController';
 import CurrentBusinessController from '@/actions/App/Http/Controllers/Backoffice/CurrentBusinessController';
+import LicensePricingController from '@/actions/App/Http/Controllers/Backoffice/LicensePricingController';
 import Heading from '@/components/Heading.vue';
 import InputError from '@/components/InputError.vue';
 import { Badge } from '@/components/ui/badge';
@@ -15,8 +17,24 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { index as backofficeBusinesses } from '@/routes/backoffice/businesses';
 import { index as backofficeTeam } from '@/routes/backoffice/team';
@@ -27,6 +45,25 @@ type BusinessItem = {
     id: number;
     name: string;
     slug: string;
+    address: string | null;
+    province: string | null;
+    municipality: string | null;
+    street: string | null;
+    phone: string | null;
+    default_currency: string;
+    policies: {
+        allowZeroStockSales: boolean;
+        enableDebtManagement: boolean;
+        showPrice: boolean;
+        showStock: boolean;
+        showQrCodeGenerator: boolean;
+        printSaleReceiptEnabled: boolean;
+        productCodePrefix: string;
+        productCodeDigits: number;
+    };
+    data_reset_version: number;
+    data_reset_at: string | null;
+    owner_emails: string[];
     is_active: boolean;
     current_user_role: string | null;
     membership_is_active: boolean | null;
@@ -35,11 +72,276 @@ type BusinessItem = {
 
 type Props = {
     businesses: BusinessItem[];
+    currentBusiness: BusinessItem | null;
+    generatedSyncToken: {
+        token: string | null;
+        owner_email: string | null;
+        warning: string | null;
+    };
+    licensePricing: {
+        catalog: {
+            operationWindowDays: number;
+            conditions: {
+                currency: string;
+                activePosDefinition: string;
+                activeOwnerDefinition: string;
+            };
+            rules: Array<{
+                id: string;
+                name: string;
+                description: string | null;
+                currency: string;
+                monthlyPrice: number;
+                minActivePos: number;
+                maxActivePos: number | null;
+                minActiveOwners: number | null;
+                maxActiveOwners: number | null;
+            }>;
+        };
+        quote: {
+            currency: string;
+            monthlyPrice: number;
+            activePosCount: number;
+            activeOwnerCount: number;
+            operationWindowDays: number;
+            ruleLabel: string | null;
+            ruleDescription: string | null;
+        } | null;
+        config: {
+            id: number | null;
+            active_pos_operation_window_days: number;
+        };
+        rules: Array<{
+            id: number;
+            name: string;
+            description: string | null;
+            currency: string;
+            monthly_price: number;
+            min_active_pos: number;
+            max_active_pos: number | null;
+            min_active_owners: number | null;
+            max_active_owners: number | null;
+            sort_order: number;
+            is_active: boolean;
+        }>;
+    };
+};
+
+type CubaProvince = {
+    name: string;
+    municipalities: string[];
+};
+
+type BusinessSelection = {
+    province: string;
+    municipality: string;
+    defaultCurrency: string;
 };
 
 defineProps<Props>();
 
 const page = usePage<{ auth: Auth; flash: Flash }>();
+const copiedToken = ref(false);
+const editingBusinessId = ref<number | null>(null);
+const clearingBusinessId = ref<number | null>(null);
+const clearConfirmation = ref('');
+const currencyOptions = ['CUP', 'USD', 'EUR', 'MLC'];
+const cubaProvinces: CubaProvince[] = [
+    {
+        name: 'Pinar del Río',
+        municipalities: [
+            'Consolación del Sur', 'Guane', 'La Palma', 'Los Palacios', 'Mantua',
+            'Minas de Matahambre', 'Pinar del Río', 'San Juan y Martínez',
+            'San Luis', 'Sandino', 'Viñales',
+        ],
+    },
+    {
+        name: 'Artemisa',
+        municipalities: [
+            'Alquízar', 'Artemisa', 'Bauta', 'Caimito', 'Candelaria', 'Guanajay',
+            'Güira de Melena', 'Mariel', 'San Antonio de los Baños',
+            'San Cristóbal', 'Bahía Honda',
+        ],
+    },
+    {
+        name: 'La Habana',
+        municipalities: [
+            'Arroyo Naranjo', 'Boyeros', 'Centro Habana', 'Cerro', 'Cotorro',
+            'Diez de Octubre', 'Guanabacoa', 'Habana del Este', 'Habana Vieja',
+            'La Lisa', 'Marianao', 'Playa', 'Plaza de la Revolución', 'Regla',
+            'San Miguel del Padrón',
+        ],
+    },
+    {
+        name: 'Mayabeque',
+        municipalities: [
+            'Batabanó', 'Bejucal', 'Güines', 'Jaruco', 'Madruga', 'Melena del Sur',
+            'Nueva Paz', 'Quivicán', 'San José de las Lajas', 'San Nicolás',
+            'Santa Cruz del Norte',
+        ],
+    },
+    {
+        name: 'Matanzas',
+        municipalities: [
+            'Calimete', 'Cárdenas', 'Ciénaga de Zapata', 'Colón', 'Jagüey Grande',
+            'Jovellanos', 'Limonar', 'Los Arabos', 'Martí', 'Matanzas', 'Pedro Betancourt',
+            'Perico', 'Unión de Reyes',
+        ],
+    },
+    {
+        name: 'Cienfuegos',
+        municipalities: [
+            'Abreus', 'Aguada de Pasajeros', 'Cienfuegos', 'Cruces', 'Cumanayagua',
+            'Lajas', 'Palmira', 'Rodas',
+        ],
+    },
+    {
+        name: 'Villa Clara',
+        municipalities: [
+            'Caibarién', 'Camajuaní', 'Cifuentes', 'Corralillo', 'Encrucijada',
+            'Manicaragua', 'Placetas', 'Quemado de Güines', 'Ranchuelo', 'Remedios',
+            'Sagua la Grande', 'Santa Clara', 'Santo Domingo',
+        ],
+    },
+    {
+        name: 'Sancti Spíritus',
+        municipalities: [
+            'Cabaiguán', 'Fomento', 'Jatibonico', 'La Sierpe', 'Sancti Spíritus',
+            'Taguasco', 'Trinidad', 'Yaguajay',
+        ],
+    },
+    {
+        name: 'Ciego de Ávila',
+        municipalities: [
+            'Baraguá', 'Bolivia', 'Chambas', 'Ciego de Ávila', 'Ciro Redondo',
+            'Florencia', 'Majagua', 'Morón', 'Primero de Enero', 'Venezuela',
+        ],
+    },
+    {
+        name: 'Camagüey',
+        municipalities: [
+            'Camagüey', 'Carlos Manuel de Céspedes', 'Esmeralda', 'Florida',
+            'Guáimaro', 'Jimaguayú', 'Minas', 'Najasa', 'Nuevitas', 'Santa Cruz del Sur',
+            'Sibanicú', 'Sierra de Cubitas', 'Vertientes',
+        ],
+    },
+    {
+        name: 'Las Tunas',
+        municipalities: [
+            'Amancio', 'Colombia', 'Jesús Menéndez', 'Jobabo', 'Las Tunas',
+            'Majibacoa', 'Manatí', 'Puerto Padre',
+        ],
+    },
+    {
+        name: 'Holguín',
+        municipalities: [
+            'Antilla', 'Báguanos', 'Banes', 'Cacocum', 'Calixto García', 'Cueto',
+            'Frank País', 'Gibara', 'Holguín', 'Mayarí', 'Moa', 'Rafael Freyre',
+            'Sagua de Tánamo', 'Urbano Noris',
+        ],
+    },
+    {
+        name: 'Granma',
+        municipalities: [
+            'Bartolomé Masó', 'Bayamo', 'Buey Arriba', 'Campechuela', 'Cauto Cristo',
+            'Guisa', 'Jiguaní', 'Manzanillo', 'Media Luna', 'Niquero', 'Pilón',
+            'Río Cauto', 'Yara',
+        ],
+    },
+    {
+        name: 'Santiago de Cuba',
+        municipalities: [
+            'Contramaestre', 'Guamá', 'Mella', 'Palma Soriano', 'San Luis',
+            'Santiago de Cuba', 'Segundo Frente', 'Songo-La Maya', 'Tercer Frente',
+        ],
+    },
+    {
+        name: 'Guantánamo',
+        municipalities: [
+            'Baracoa', 'Caimanera', 'El Salvador', 'Guantánamo', 'Imías', 'Maisí',
+            'Manuel Tames', 'Niceto Pérez', 'San Antonio del Sur', 'Yateras',
+        ],
+    },
+    {
+        name: 'Isla de la Juventud',
+        municipalities: ['Isla de la Juventud'],
+    },
+];
+const createBusinessSelection = reactive<BusinessSelection>({
+    province: '',
+    municipality: '',
+    defaultCurrency: 'CUP',
+});
+const editBusinessSelections = reactive<Record<number, BusinessSelection>>({});
+
+const selectValue = (value: unknown) => String(value ?? '');
+
+const municipalitiesForProvince = (provinceName: string) => {
+    return cubaProvinces.find((province) => province.name === provinceName)?.municipalities ?? [];
+};
+
+const createMunicipalities = computed(() => municipalitiesForProvince(createBusinessSelection.province));
+
+const editSelectionFor = (business: BusinessItem) => {
+    editBusinessSelections[business.id] ??= {
+        province: business.province ?? '',
+        municipality: business.municipality ?? '',
+        defaultCurrency: business.default_currency || 'CUP',
+    };
+
+    return editBusinessSelections[business.id];
+};
+
+const editMunicipalitiesFor = (business: BusinessItem) => municipalitiesForProvince(editSelectionFor(business).province);
+
+const updateCreateProvince = (value: unknown) => {
+    createBusinessSelection.province = selectValue(value);
+    createBusinessSelection.municipality = '';
+};
+
+const updateEditProvince = (business: BusinessItem, value: unknown) => {
+    const selection = editSelectionFor(business);
+    selection.province = selectValue(value);
+    selection.municipality = '';
+};
+
+const updateEditMunicipality = (business: BusinessItem, value: unknown) => {
+    editSelectionFor(business).municipality = selectValue(value);
+};
+
+const updateEditCurrency = (business: BusinessItem, value: unknown) => {
+    editSelectionFor(business).defaultCurrency = selectValue(value);
+};
+
+const toggleEdit = (businessId: number) => {
+    editingBusinessId.value = editingBusinessId.value === businessId ? null : businessId;
+};
+
+const openClearDialog = (business: BusinessItem) => {
+    clearingBusinessId.value = business.id;
+    clearConfirmation.value = '';
+};
+
+const updateClearDialog = (businessId: number, open: boolean) => {
+    clearingBusinessId.value = open ? businessId : null;
+
+    if (!open) {
+        clearConfirmation.value = '';
+    }
+};
+
+const copySyncToken = async (token: string | null) => {
+    if (!token || !navigator?.clipboard) {
+        return;
+    }
+
+    await navigator.clipboard.writeText(token);
+    copiedToken.value = true;
+
+    window.setTimeout(() => {
+        copiedToken.value = false;
+    }, 2000);
+};
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -70,7 +372,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                         </Badge>
                         <Heading
                             title="Gestiona tus negocios"
-                            description="Crea nuevos negocios, cambia el contexto actual y avanza al equipo del negocio activo."
+                            description="Crea nuevos negocios, cambia el contexto actual y completa la ficha operativa del negocio activo."
                         />
                     </div>
 
@@ -107,8 +409,9 @@ const breadcrumbs: BreadcrumbItem[] = [
                             v-for="business in businesses"
                             :key="business.id"
                             class="rounded-2xl border border-border/70 bg-muted/20 p-4"
+                            :class="{ 'opacity-70': !business.is_active }"
                         >
-                            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                                 <div class="space-y-2">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <h3 class="text-base font-semibold">
@@ -121,6 +424,13 @@ const breadcrumbs: BreadcrumbItem[] = [
                                             Actual
                                         </Badge>
                                         <Badge
+                                            v-if="!business.is_active"
+                                            variant="outline"
+                                            class="rounded-full border-red-300 text-red-700"
+                                        >
+                                            Inactivo
+                                        </Badge>
+                                        <Badge
                                             v-if="business.current_user_role"
                                             variant="secondary"
                                             class="rounded-full"
@@ -131,79 +441,798 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     <p class="text-sm text-muted-foreground">
                                         {{ business.slug }}
                                     </p>
+                                    <div class="grid gap-1 text-sm text-muted-foreground">
+                                        <p>
+                                            Moneda: {{ business.default_currency }}
+                                        </p>
+                                        <p v-if="business.phone">
+                                            Teléfono: {{ business.phone }}
+                                        </p>
+                                        <p v-if="business.street">
+                                            Dirección: {{ business.street }}
+                                        </p>
+                                        <p v-if="business.province || business.municipality">
+                                            Ubicación: {{ [business.municipality, business.province].filter(Boolean).join(', ') }}
+                                        </p>
+                                        <p>
+                                            Ventas sin stock:
+                                            {{ business.policies.allowZeroStockSales ? 'permitidas' : 'bloqueadas' }}
+                                        </p>
+                                        <p>
+                                            Deudas:
+                                            {{ business.policies.enableDebtManagement ? 'activadas' : 'desactivadas' }}
+                                        </p>
+                                        <p>
+                                            Comprobante:
+                                            {{ business.policies.printSaleReceiptEnabled ? 'se imprime' : 'no se imprime' }}
+                                        </p>
+                                        <p v-if="business.policies.productCodePrefix || business.policies.productCodeDigits">
+                                            Autonumérico:
+                                            {{ business.policies.productCodePrefix || 'Sin prefijo' }}
+                                            {{ business.policies.productCodeDigits }} cifras
+                                        </p>
+                                        <p v-if="business.owner_emails.length">
+                                            Dueños: {{ business.owner_emails.join(', ') }}
+                                        </p>
+                                        <p v-if="business.data_reset_version > 0">
+                                            Limpiezas: {{ business.data_reset_version }}
+                                        </p>
+                                    </div>
                                 </div>
 
-                                <Form
-                                    v-bind="CurrentBusinessController.update.form()"
-                                    class="flex"
-                                    v-slot="{ processing }"
-                                >
-                                    <input
-                                        type="hidden"
-                                        name="business_id"
-                                        :value="business.id"
-                                    />
-                                    <Button
-                                        :disabled="processing || business.is_current"
-                                        :variant="business.is_current ? 'secondary' : 'default'"
-                                        class="min-w-40"
+                                <div class="flex flex-col gap-2 md:items-end">
+                                    <Form
+                                        v-bind="CurrentBusinessController.update.form()"
+                                        class="flex"
+                                        v-slot="{ processing }"
                                     >
-                                        <CircleCheckBig
-                                            v-if="business.is_current"
-                                            class="size-4"
+                                        <input
+                                            type="hidden"
+                                            name="business_id"
+                                            :value="business.id"
                                         />
-                                        {{ business.is_current ? 'Seleccionado' : 'Usar este negocio' }}
-                                    </Button>
-                                </Form>
+                                        <Button
+                                            :disabled="processing || business.is_current || !business.is_active"
+                                            :variant="business.is_current ? 'secondary' : 'default'"
+                                            class="min-w-40"
+                                        >
+                                            <CircleCheckBig
+                                                v-if="business.is_current"
+                                                class="size-4"
+                                            />
+                                            {{ business.is_current ? 'Seleccionado' : 'Usar este negocio' }}
+                                        </Button>
+                                    </Form>
+
+                                    <div class="flex flex-wrap gap-2 md:justify-end">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            class="min-w-32"
+                                            @click="toggleEdit(business.id)"
+                                        >
+                                            <PencilLine class="size-4" />
+                                            {{ editingBusinessId === business.id ? 'Cerrar edición' : 'Editar' }}
+                                        </Button>
+
+                                        <Form
+                                            v-if="business.is_active"
+                                            v-bind="BusinessController.destroy.form(business.id)"
+                                            class="inline-flex"
+                                            v-slot="{ processing: deactivating }"
+                                        >
+                                            <Button
+                                                :disabled="deactivating"
+                                                variant="outline"
+                                                class="min-w-32 text-red-700"
+                                            >
+                                                <PowerOff class="size-4" />
+                                                Desactivar
+                                            </Button>
+                                        </Form>
+                                        <Form
+                                            v-else
+                                            v-bind="BusinessController.restore.form(business.id)"
+                                            class="inline-flex"
+                                            v-slot="{ processing: activating }"
+                                        >
+                                            <Button
+                                                :disabled="activating"
+                                                variant="outline"
+                                                class="min-w-32 text-emerald-700"
+                                            >
+                                                <Power class="size-4" />
+                                                Reactivar
+                                            </Button>
+                                        </Form>
+
+                                        <Dialog
+                                            :open="clearingBusinessId === business.id"
+                                            @update:open="updateClearDialog(business.id, $event)"
+                                        >
+                                            <Button
+                                                type="button"
+                                                variant="destructive"
+                                                class="min-w-32"
+                                                @click="openClearDialog(business)"
+                                            >
+                                                <Trash2 class="size-4" />
+                                                Limpiar
+                                            </Button>
+                                            <DialogContent class="sm:max-w-lg">
+                                                <Form
+                                                    v-bind="BusinessController.clear.form(business.id)"
+                                                    class="space-y-5"
+                                                    v-slot="{ errors, processing }"
+                                                >
+                                                    <DialogHeader class="space-y-3">
+                                                        <div class="flex size-12 items-center justify-center rounded-full bg-red-100 text-red-700">
+                                                            <AlertTriangle class="size-6" />
+                                                        </div>
+                                                        <DialogTitle>Limpiar {{ business.name }}</DialogTitle>
+                                                        <DialogDescription>
+                                                            Se eliminarán operaciones, productos, inventario, clientes, proveedores, puntos de venta, mermas y datos de sincronización. Se conservan las preferencias del negocio y su equipo.
+                                                        </DialogDescription>
+                                                    </DialogHeader>
+
+                                                    <div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                                                        Los dispositivos tendrán que reiniciar sus datos locales antes de volver a sincronizar.
+                                                    </div>
+
+                                                    <div class="grid gap-2">
+                                                        <Label :for="`clear-confirmation-${business.id}`">
+                                                            Escribe {{ business.slug }} para confirmar
+                                                        </Label>
+                                                        <Input
+                                                            :id="`clear-confirmation-${business.id}`"
+                                                            v-model="clearConfirmation"
+                                                            name="confirmation"
+                                                            autocomplete="off"
+                                                        />
+                                                        <InputError :message="errors.confirmation" />
+                                                    </div>
+
+                                                    <DialogFooter class="gap-2">
+                                                        <DialogClose as-child>
+                                                            <Button type="button" variant="outline">
+                                                                Cancelar
+                                                            </Button>
+                                                        </DialogClose>
+                                                        <Button
+                                                            type="submit"
+                                                            variant="destructive"
+                                                            :disabled="processing || clearConfirmation !== business.slug"
+                                                        >
+                                                            <Trash2 class="size-4" />
+                                                            {{ processing ? 'Limpiando...' : 'Limpiar negocio' }}
+                                                        </Button>
+                                                    </DialogFooter>
+                                                </Form>
+                                            </DialogContent>
+                                        </Dialog>
+                                    </div>
+                                </div>
                             </div>
+
+                            <Form
+                                v-if="editingBusinessId === business.id"
+                                v-bind="BusinessController.update.form(business.id)"
+                                class="mt-5 grid gap-4 rounded-2xl border border-dashed border-border bg-background/60 p-4"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-name-${business.id}`">Nombre del negocio</Label>
+                                        <Input
+                                            :id="`edit-name-${business.id}`"
+                                            name="name"
+                                            required
+                                            :default-value="business.name"
+                                        />
+                                        <InputError :message="errors.name" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-slug-${business.id}`">Slug</Label>
+                                        <Input
+                                            :id="`edit-slug-${business.id}`"
+                                            name="slug"
+                                            :default-value="business.slug"
+                                        />
+                                        <InputError :message="errors.slug" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-province-${business.id}`">Provincia</Label>
+                                        <input
+                                            type="hidden"
+                                            name="province"
+                                            :value="editSelectionFor(business).province"
+                                        />
+                                        <Select
+                                            :model-value="editSelectionFor(business).province"
+                                            @update:model-value="updateEditProvince(business, $event)"
+                                        >
+                                            <SelectTrigger
+                                                :id="`edit-province-${business.id}`"
+                                                class="w-full"
+                                            >
+                                                <SelectValue placeholder="Selecciona una provincia" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-for="province in cubaProvinces"
+                                                    :key="province.name"
+                                                    :value="province.name"
+                                                >
+                                                    {{ province.name }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <InputError :message="errors.province" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-municipality-${business.id}`">Municipio</Label>
+                                        <input
+                                            type="hidden"
+                                            name="municipality"
+                                            :value="editSelectionFor(business).municipality"
+                                        />
+                                        <Select
+                                            :model-value="editSelectionFor(business).municipality"
+                                            :disabled="!editSelectionFor(business).province"
+                                            @update:model-value="updateEditMunicipality(business, $event)"
+                                        >
+                                            <SelectTrigger
+                                                :id="`edit-municipality-${business.id}`"
+                                                class="w-full"
+                                            >
+                                                <SelectValue placeholder="Selecciona un municipio" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-for="municipality in editMunicipalitiesFor(business)"
+                                                    :key="municipality"
+                                                    :value="municipality"
+                                                >
+                                                    {{ municipality }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <InputError :message="errors.municipality" />
+                                    </div>
+                                    <div class="grid gap-2 md:col-span-2">
+                                        <Label :for="`edit-street-${business.id}`">Calle y número</Label>
+                                        <Input
+                                            :id="`edit-street-${business.id}`"
+                                            name="street"
+                                            :default-value="business.street ?? ''"
+                                        />
+                                        <InputError :message="errors.street" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-phone-${business.id}`">Teléfono</Label>
+                                        <Input
+                                            :id="`edit-phone-${business.id}`"
+                                            name="phone"
+                                            :default-value="business.phone ?? ''"
+                                        />
+                                        <InputError :message="errors.phone" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-currency-${business.id}`">Moneda</Label>
+                                        <input
+                                            type="hidden"
+                                            name="default_currency"
+                                            :value="editSelectionFor(business).defaultCurrency"
+                                        />
+                                        <Select
+                                            :model-value="editSelectionFor(business).defaultCurrency"
+                                            @update:model-value="updateEditCurrency(business, $event)"
+                                        >
+                                            <SelectTrigger
+                                                :id="`edit-currency-${business.id}`"
+                                                class="w-full"
+                                            >
+                                                <SelectValue placeholder="Selecciona una moneda" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-for="currency in currencyOptions"
+                                                    :key="currency"
+                                                    :value="currency"
+                                                >
+                                                    {{ currency }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <InputError :message="errors.default_currency" />
+                                    </div>
+                                </div>
+
+                                <div class="grid gap-4 rounded-2xl border border-border/70 p-4 md:grid-cols-2">
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="allow_zero_stock_sales" value="0" />
+                                        <input type="checkbox" name="allow_zero_stock_sales" value="1" :checked="business.policies.allowZeroStockSales" />
+                                        Permitir ventas sin stock disponible
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="enable_debt_management" value="0" />
+                                        <input type="checkbox" name="enable_debt_management" value="1" :checked="business.policies.enableDebtManagement" />
+                                        Gestión de deudas
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="print_sale_receipt_enabled" value="0" />
+                                        <input type="checkbox" name="print_sale_receipt_enabled" value="1" :checked="business.policies.printSaleReceiptEnabled" />
+                                        Imprimir comprobante de ventas
+                                    </label>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-product-code-prefix-${business.id}`">Prefijo del autonumérico</Label>
+                                        <Input
+                                            :id="`edit-product-code-prefix-${business.id}`"
+                                            name="product_code_prefix"
+                                            :default-value="business.policies.productCodePrefix"
+                                        />
+                                        <InputError :message="errors.product_code_prefix" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label :for="`edit-product-code-digits-${business.id}`">Cifras del autonumérico</Label>
+                                        <Input
+                                            :id="`edit-product-code-digits-${business.id}`"
+                                            name="product_code_digits"
+                                            type="number"
+                                            min="0"
+                                            max="20"
+                                            :default-value="business.policies.productCodeDigits"
+                                        />
+                                        <InputError :message="errors.product_code_digits" />
+                                    </div>
+                                </div>
+
+                                <div class="flex justify-end">
+                                    <Button :disabled="processing">
+                                        Guardar cambios
+                                    </Button>
+                                </div>
+                            </Form>
                         </article>
                     </CardContent>
                 </Card>
 
-                <Card class="rounded-3xl">
-                    <CardHeader>
-                        <CardTitle>Crear negocio</CardTitle>
-                        <CardDescription>
-                            Registra un nuevo negocio y lo dejaremos activo para ti de inmediato.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <Form
-                            v-bind="BusinessController.store.form()"
-                            class="space-y-5"
-                            v-slot="{ errors, processing }"
-                        >
-                            <div class="grid gap-2">
-                                <Label for="name">Nombre del negocio</Label>
-                                <Input
-                                    id="name"
-                                    name="name"
-                                    required
-                                    placeholder="Bodega Central"
-                                />
-                                <InputError :message="errors.name" />
+                <div class="grid gap-6">
+                    <Card class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle>Crear negocio</CardTitle>
+                            <CardDescription>
+                                Registra un nuevo negocio y lo dejaremos activo para ti de inmediato.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Form
+                                v-bind="BusinessController.store.form()"
+                                class="space-y-5"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-2">
+                                    <Label for="name">Nombre del negocio</Label>
+                                    <Input
+                                        id="name"
+                                        name="name"
+                                        required
+                                        placeholder="Bodega Central"
+                                    />
+                                    <InputError :message="errors.name" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="slug">Slug opcional</Label>
+                                    <Input
+                                        id="slug"
+                                        name="slug"
+                                        placeholder="bodega-central"
+                                    />
+                                    <InputError :message="errors.slug" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="province">Provincia</Label>
+                                    <input
+                                        type="hidden"
+                                        name="province"
+                                        :value="createBusinessSelection.province"
+                                    />
+                                    <Select
+                                        :model-value="createBusinessSelection.province"
+                                        @update:model-value="updateCreateProvince"
+                                    >
+                                        <SelectTrigger id="province" class="w-full">
+                                            <SelectValue placeholder="Selecciona una provincia" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="province in cubaProvinces"
+                                                :key="province.name"
+                                                :value="province.name"
+                                            >
+                                                {{ province.name }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <InputError :message="errors.province" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="municipality">Municipio</Label>
+                                    <input
+                                        type="hidden"
+                                        name="municipality"
+                                        :value="createBusinessSelection.municipality"
+                                    />
+                                    <Select
+                                        :model-value="createBusinessSelection.municipality"
+                                        :disabled="!createBusinessSelection.province"
+                                        @update:model-value="createBusinessSelection.municipality = selectValue($event)"
+                                    >
+                                        <SelectTrigger id="municipality" class="w-full">
+                                            <SelectValue placeholder="Selecciona un municipio" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="municipality in createMunicipalities"
+                                                :key="municipality"
+                                                :value="municipality"
+                                            >
+                                                {{ municipality }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <InputError :message="errors.municipality" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="street">Calle y número</Label>
+                                    <Input
+                                        id="street"
+                                        name="street"
+                                        placeholder="Calle 10 #123 entre A y B"
+                                    />
+                                    <InputError :message="errors.street" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="phone">Teléfono</Label>
+                                    <Input
+                                        id="phone"
+                                        name="phone"
+                                        placeholder="+53 55555555"
+                                    />
+                                    <InputError :message="errors.phone" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label for="default_currency">Moneda</Label>
+                                    <input
+                                        type="hidden"
+                                        name="default_currency"
+                                        :value="createBusinessSelection.defaultCurrency"
+                                    />
+                                    <Select
+                                        :model-value="createBusinessSelection.defaultCurrency"
+                                        @update:model-value="createBusinessSelection.defaultCurrency = selectValue($event)"
+                                    >
+                                        <SelectTrigger id="default_currency" class="w-full">
+                                            <SelectValue placeholder="Selecciona una moneda" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="currency in currencyOptions"
+                                                :key="currency"
+                                                :value="currency"
+                                            >
+                                                {{ currency }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <InputError :message="errors.default_currency" />
+                                </div>
+
+                                <div class="grid gap-4 rounded-2xl border border-border/70 p-4">
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="allow_zero_stock_sales" value="0" />
+                                        <input type="checkbox" name="allow_zero_stock_sales" value="1" checked />
+                                        Permitir ventas sin stock disponible
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="enable_debt_management" value="0" />
+                                        <input type="checkbox" name="enable_debt_management" value="1" checked />
+                                        Gestión de deudas
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm">
+                                        <input type="hidden" name="print_sale_receipt_enabled" value="0" />
+                                        <input type="checkbox" name="print_sale_receipt_enabled" value="1" />
+                                        Imprimir comprobante de ventas
+                                    </label>
+                                    <div class="grid gap-2">
+                                        <Label for="product_code_prefix">Prefijo del autonumérico</Label>
+                                        <Input
+                                            id="product_code_prefix"
+                                            name="product_code_prefix"
+                                            placeholder="PROD-"
+                                        />
+                                        <InputError :message="errors.product_code_prefix" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="product_code_digits">Cifras del autonumérico</Label>
+                                        <Input
+                                            id="product_code_digits"
+                                            name="product_code_digits"
+                                            type="number"
+                                            min="0"
+                                            max="20"
+                                            value="0"
+                                        />
+                                        <InputError :message="errors.product_code_digits" />
+                                    </div>
+                                </div>
+
+                                <Button :disabled="processing" class="w-full">
+                                    <Plus class="size-4" />
+                                    Crear negocio
+                                </Button>
+                            </Form>
+                        </CardContent>
+                        <CardFooter class="text-sm text-muted-foreground">
+                            Si no defines un slug, lo generamos automáticamente.
+                        </CardFooter>
+                    </Card>
+
+                    <Card v-if="currentBusiness" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle>Precio de licencia del negocio actual</CardTitle>
+                            <CardDescription>
+                                Este cálculo usa solo puntos de venta activos y dueños activos.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent v-if="licensePricing.quote" class="space-y-4">
+                            <div class="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                                <p class="text-sm text-muted-foreground">Tarifa vigente</p>
+                                <p class="mt-2 text-3xl font-semibold">
+                                    {{ licensePricing.quote.monthlyPrice.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                                    {{ licensePricing.quote.currency }}/mes
+                                </p>
+                                <p class="mt-2 text-sm text-muted-foreground">
+                                    {{ licensePricing.quote.ruleLabel ?? 'Sin regla aplicada' }}
+                                </p>
                             </div>
 
-                            <div class="grid gap-2">
-                                <Label for="slug">Slug opcional</Label>
-                                <Input
-                                    id="slug"
-                                    name="slug"
-                                    placeholder="bodega-central"
-                                />
-                                <InputError :message="errors.slug" />
+                            <div class="grid gap-3 md:grid-cols-2">
+                                <div class="rounded-2xl border border-border/70 p-4">
+                                    <p class="text-sm text-muted-foreground">POS activos contados</p>
+                                    <p class="mt-2 text-2xl font-semibold">{{ licensePricing.quote.activePosCount }}</p>
+                                </div>
+                                <div class="rounded-2xl border border-border/70 p-4">
+                                    <p class="text-sm text-muted-foreground">Dueños activos contados</p>
+                                    <p class="mt-2 text-2xl font-semibold">{{ licensePricing.quote.activeOwnerCount }}</p>
+                                </div>
                             </div>
 
-                            <Button :disabled="processing" class="w-full">
-                                <Plus class="size-4" />
-                                Crear negocio
-                            </Button>
-                        </Form>
-                    </CardContent>
-                    <CardFooter class="text-sm text-muted-foreground">
-                        Si no defines un slug, lo generamos automáticamente.
-                    </CardFooter>
-                </Card>
+                            <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                                <p><strong>Ventana de operaciones regulares:</strong> {{ licensePricing.quote.operationWindowDays }} días.</p>
+                                <p class="mt-2">{{ licensePricing.quote.ruleDescription ?? 'La tarifa se determina por el tramo configurado en el tarifario activo.' }}</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card v-if="page.props.auth.user?.is_platform_admin" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle>Tarifario de licencias</CardTitle>
+                            <CardDescription>
+                                Configura las reglas globales de cobro y define cuántos días cuentan para considerar un POS con operaciones regulares.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent class="space-y-6">
+                            <Form
+                                v-bind="LicensePricingController.updateConfig.form()"
+                                class="space-y-4 rounded-2xl border border-border/70 p-4"
+                                v-slot="{ errors, processing }"
+                            >
+                                <div class="grid gap-2">
+                                    <Label for="active_pos_operation_window_days">Ventana de operación regular (días)</Label>
+                                    <Input
+                                        id="active_pos_operation_window_days"
+                                        name="active_pos_operation_window_days"
+                                        type="number"
+                                        min="1"
+                                        :default-value="licensePricing.config.active_pos_operation_window_days"
+                                    />
+                                    <InputError :message="errors.active_pos_operation_window_days" />
+                                </div>
+
+                                <Button :disabled="processing" variant="outline">
+                                    Guardar ventana de actividad
+                                </Button>
+                            </Form>
+
+                            <div class="space-y-4">
+                                <article
+                                    v-for="rule in licensePricing.rules"
+                                    :key="rule.id"
+                                    class="rounded-2xl border border-border/70 p-4"
+                                >
+                                    <Form
+                                        v-bind="LicensePricingController.update.form(rule.id)"
+                                        class="space-y-4"
+                                        v-slot="{ processing }"
+                                    >
+                                        <div class="grid gap-4 md:grid-cols-2">
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-name-${rule.id}`">Nombre</Label>
+                                                <Input :id="`rule-name-${rule.id}`" name="name" :default-value="rule.name" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-currency-${rule.id}`">Moneda</Label>
+                                                <Input :id="`rule-currency-${rule.id}`" name="currency" :default-value="rule.currency" />
+                                            </div>
+                                            <div class="grid gap-2 md:col-span-2">
+                                                <Label :for="`rule-description-${rule.id}`">Descripción</Label>
+                                                <Input :id="`rule-description-${rule.id}`" name="description" :default-value="rule.description ?? ''" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-price-${rule.id}`">Precio mensual</Label>
+                                                <Input :id="`rule-price-${rule.id}`" name="monthly_price" type="number" step="0.01" min="0" :default-value="rule.monthly_price" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-sort-${rule.id}`">Orden</Label>
+                                                <Input :id="`rule-sort-${rule.id}`" name="sort_order" type="number" min="0" :default-value="rule.sort_order" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-min-pos-${rule.id}`">POS activos mínimo</Label>
+                                                <Input :id="`rule-min-pos-${rule.id}`" name="min_active_pos" type="number" min="0" :default-value="rule.min_active_pos" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-max-pos-${rule.id}`">POS activos máximo</Label>
+                                                <Input :id="`rule-max-pos-${rule.id}`" name="max_active_pos" type="number" min="0" :default-value="rule.max_active_pos ?? ''" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-min-owners-${rule.id}`">Dueños activos mínimo</Label>
+                                                <Input :id="`rule-min-owners-${rule.id}`" name="min_active_owners" type="number" min="0" :default-value="rule.min_active_owners ?? ''" />
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`rule-max-owners-${rule.id}`">Dueños activos máximo</Label>
+                                                <Input :id="`rule-max-owners-${rule.id}`" name="max_active_owners" type="number" min="0" :default-value="rule.max_active_owners ?? ''" />
+                                            </div>
+                                        </div>
+
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="hidden" name="is_active" value="0" />
+                                            <input type="checkbox" name="is_active" value="1" :checked="rule.is_active" />
+                                            Regla activa
+                                        </label>
+
+                                        <div class="flex flex-col gap-3 md:flex-row">
+                                            <Button :disabled="processing" variant="outline">Guardar regla</Button>
+                                        </div>
+                                    </Form>
+                                    <Form
+                                        v-bind="LicensePricingController.destroy.form(rule.id)"
+                                        class="mt-3 flex"
+                                        v-slot="{ processing: deleting }"
+                                    >
+                                        <Button :disabled="deleting" variant="destructive" type="submit">Eliminar</Button>
+                                    </Form>
+                                </article>
+                            </div>
+
+                            <Form
+                                v-bind="LicensePricingController.store.form()"
+                                class="space-y-4 rounded-2xl border border-dashed border-border p-4"
+                                v-slot="{ processing }"
+                            >
+                                <h3 class="text-base font-semibold">Crear nueva regla</h3>
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-name">Nombre</Label>
+                                        <Input id="new-rule-name" name="name" placeholder="Hasta 5 POS activos" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-currency">Moneda</Label>
+                                        <Input id="new-rule-currency" name="currency" value="CUP" />
+                                    </div>
+                                    <div class="grid gap-2 md:col-span-2">
+                                        <Label for="new-rule-description">Descripción</Label>
+                                        <Input id="new-rule-description" name="description" placeholder="Describe cuándo aplica esta regla." />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-price">Precio mensual</Label>
+                                        <Input id="new-rule-price" name="monthly_price" type="number" min="0" step="0.01" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-order">Orden</Label>
+                                        <Input id="new-rule-order" name="sort_order" type="number" min="0" value="50" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-min-pos">POS activos mínimo</Label>
+                                        <Input id="new-rule-min-pos" name="min_active_pos" type="number" min="0" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-max-pos">POS activos máximo</Label>
+                                        <Input id="new-rule-max-pos" name="max_active_pos" type="number" min="0" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-min-owners">Dueños activos mínimo</Label>
+                                        <Input id="new-rule-min-owners" name="min_active_owners" type="number" min="0" />
+                                    </div>
+                                    <div class="grid gap-2">
+                                        <Label for="new-rule-max-owners">Dueños activos máximo</Label>
+                                        <Input id="new-rule-max-owners" name="max_active_owners" type="number" min="0" />
+                                    </div>
+                                </div>
+
+                                <label class="flex items-center gap-2 text-sm">
+                                    <input type="hidden" name="is_active" value="0" />
+                                    <input type="checkbox" name="is_active" value="1" checked />
+                                    Regla activa
+                                </label>
+
+                                <Button :disabled="processing" class="w-full">Crear regla</Button>
+                            </Form>
+                        </CardContent>
+                    </Card>
+
+                    <Card v-if="currentBusiness" class="rounded-3xl">
+                        <CardHeader>
+                            <CardTitle class="flex items-center gap-2">
+                                <KeyRound class="size-4" />
+                                Token de sincronización
+                            </CardTitle>
+                            <CardDescription>
+                                Genera un token nuevo para el negocio actual y compártelo con el dueño que vaya a configurar la app. El valor solo se muestra una vez.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent class="space-y-5">
+                            <div class="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+                                <p v-if="currentBusiness.owner_emails.length">
+                                    Se emitirá para: {{ currentBusiness.owner_emails.join(', ') }}
+                                </p>
+                                <p v-else>
+                                    Este negocio todavía no tiene dueños activos asociados en el backoffice.
+                                </p>
+                            </div>
+
+                            <Form
+                                :action="`/backoffice/businesses/${currentBusiness.id}/sync-token`"
+                                method="post"
+                                class="space-y-4"
+                                v-slot="{ processing }"
+                            >
+                                <Button :disabled="processing || !currentBusiness.owner_emails.length" class="w-full">
+                                    <KeyRound class="size-4" />
+                                    {{ processing ? 'Generando token...' : 'Generar nuevo token' }}
+                                </Button>
+                            </Form>
+
+                            <div
+                                v-if="generatedSyncToken.token"
+                                class="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4"
+                            >
+                                <p class="text-sm font-medium text-amber-900">
+                                    Token visible solo una vez
+                                </p>
+                                <p class="text-sm text-amber-800">
+                                    Dueño asociado: {{ generatedSyncToken.owner_email ?? 'No disponible' }}
+                                </p>
+                                <p v-if="generatedSyncToken.warning" class="text-sm text-amber-800">
+                                    {{ generatedSyncToken.warning }}
+                                </p>
+                                <div class="flex flex-col gap-3 md:flex-row">
+                                    <Input readonly :value="generatedSyncToken.token" class="font-mono text-xs" />
+                                    <Button type="button" variant="outline" class="shrink-0" @click="copySyncToken(generatedSyncToken.token)">
+                                        <Copy class="size-4" />
+                                        {{ copiedToken ? 'Copiado' : 'Copiar token' }}
+                                    </Button>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         </div>
     </AppLayout>
