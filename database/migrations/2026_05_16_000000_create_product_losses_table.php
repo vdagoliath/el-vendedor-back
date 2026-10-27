@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('product_losses', function (Blueprint $table): void {
             $table->id();
-            $table->unsignedBigInteger('server_version')->nullable()->after('id');
+            $table->unsignedBigInteger('server_version')->nullable();
             $table->foreignId('business_id')->constrained()->cascadeOnDelete();
             $table->string('external_id', 191);
             $table->string('product_external_id', 191);

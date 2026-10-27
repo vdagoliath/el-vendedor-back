@@ -68,8 +68,9 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->timestamps();
 
-            $table->index(['master_order_id', 'created_at']);
-            $table->index(['seller_order_id', 'created_at']);
+            // Nombres explícitos: los autogenerados pasan de 64 caracteres y MySQL los rechaza.
+            $table->index(['master_order_id', 'created_at'], 'marketplace_order_status_histories_master_index');
+            $table->index(['seller_order_id', 'created_at'], 'marketplace_order_status_histories_seller_index');
         });
     }
 

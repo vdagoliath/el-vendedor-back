@@ -22,7 +22,8 @@ return new class extends Migration
             $table->string('last_applied_event_id', 191)->nullable();
             $table->timestamps();
 
-            $table->unique(['business_id', 'product_external_id', 'warehouse_external_id']);
+            // Nombre explícito: el autogenerado pasa de 64 caracteres y MySQL lo rechaza.
+            $table->unique(['business_id', 'product_external_id', 'warehouse_external_id'], 'stock_projections_business_product_warehouse_unique');
             $table->index(['business_id', 'product_external_id']);
             $table->index(['business_id', 'warehouse_external_id']);
         });

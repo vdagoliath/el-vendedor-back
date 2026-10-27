@@ -29,7 +29,10 @@ return new class extends Migration
         Schema::create('marketplace_quote_lines', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('marketplace_quote_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('marketplace_product_publication_id')->nullable()->constrained()->nullOnDelete();
+            // Nombre de FK explícito: el autogenerado pasa de 64 caracteres y MySQL lo rechaza.
+            $table->foreignId('marketplace_product_publication_id')->nullable()
+                ->constrained('marketplace_product_publications', 'id', 'marketplace_quote_lines_publication_foreign')
+                ->nullOnDelete();
             $table->foreignId('business_id')->constrained()->cascadeOnDelete();
             $table->string('product_external_id', 191);
             $table->string('warehouse_external_id', 191);

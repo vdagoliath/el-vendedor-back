@@ -25,7 +25,8 @@ return new class extends Migration
             $table->unique(['business_id', 'product_external_id'], 'marketplace_publications_product_unique');
             $table->index(['status', 'public_price']);
             $table->index(['business_id', 'status']);
-            $table->index(['business_id', 'warehouse_external_id']);
+            // El índice de (business_id, warehouse_external_id) lo crea
+            // 2026_08_07_151000_add_warehouse_external_id_to_marketplace_product_publications.
         });
     }
 

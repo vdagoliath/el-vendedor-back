@@ -30,8 +30,9 @@ return new class extends Migration
 
             $table->unique(['business_id', 'external_id']);
             $table->index(['business_id', 'updated_at']);
-            $table->index(['business_id', 'product_external_id', 'warehouse_external_id']);
-            $table->index(['business_id', 'warehouse_external_id', 'expiration_date']);
+            // Nombres explícitos: los autogenerados pasan de 64 caracteres y MySQL los rechaza.
+            $table->index(['business_id', 'product_external_id', 'warehouse_external_id'], 'product_batches_business_product_warehouse_index');
+            $table->index(['business_id', 'warehouse_external_id', 'expiration_date'], 'product_batches_business_warehouse_expiration_index');
             $table->index('server_version', 'product_batches_server_version_index');
         });
     }

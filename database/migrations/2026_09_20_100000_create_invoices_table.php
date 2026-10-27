@@ -16,7 +16,7 @@ return new class extends Migration
     {
         Schema::create('invoices', function (Blueprint $table): void {
             $table->id();
-            $table->unsignedBigInteger('server_version')->nullable()->after('id');
+            $table->unsignedBigInteger('server_version')->nullable();
             $table->foreignId('business_id')->constrained()->cascadeOnDelete();
             // `external_id` es `invoice:<serie>:<numero con relleno>`.
             $table->string('external_id', 191);
